@@ -2,6 +2,7 @@ import { callClaude } from '../integrations/anthropic.js';
 import { appendLead, updateLeadRow } from '../integrations/sheets.js';
 import { createEvent, updateEvent, temConflito } from '../integrations/calendar.js';
 import { upsertLead } from '../db/conversations.js';
+import { alertarAdmin } from '../utils/alerta.js';
 
 function getPromptGuardiao(dados, phone) {
   const agora = new Date();
@@ -78,6 +79,7 @@ export async function guardiao(phone, lead) {
       }
     } catch (e) {
       console.error('[GUARDIÃO] Erro no Sheets:', e.message);
+      alertarAdmin('sheets', 'Falha ao salvar lead no Google Sheets', `Phone: ${phone}\n${e.message}`).catch(() => {});
     }
   }
 
@@ -101,6 +103,7 @@ export async function guardiao(phone, lead) {
     } catch (e) {
       console.error('[GUARDIÃO] Erro no Calendar:', e.message);
       console.error('[GUARDIÃO] Dados Calendar:', JSON.stringify(resultado.googleCalendar));
+      alertarAdmin('calendar', 'Falha ao criar evento no Google Calendar', `Phone: ${phone}\n${e.message}`).catch(() => {});
     }
   } else {
     console.log('[GUARDIÃO] Calendar ignorado. agendamento_confirmado:', lead?.agendamento_confirmado);

@@ -20,6 +20,7 @@ import {
 import { ensureHeaders } from './integrations/sheets.js';
 import { temConflito, proximosSlotsLivres, deleteEvent } from './integrations/calendar.js';
 import { iniciarScheduler } from './jobs/scheduler.js';
+import { alertarAdmin, alertarBoot } from './utils/alerta.js';
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
@@ -234,7 +235,20 @@ app.post('/webhook', async (req, res) => {
   } catch (err) {
     console.error(`[ERRO] ${phone}:`, err.message);
     await sendMessage(phone, MENSAGEM_ERRO).catch(() => {});
+    // Alerta o admin (com throttle de 1h pra não spammar)
+    alertarAdmin('webhook', 'Erro ao processar mensagem', `Phone: ${phone}\nErro: ${err.message}\nStack: ${(err.stack || '').slice(0, 300)}`).catch(() => {});
   }
+});
+
+// Crashes não capturados — alerta o admin antes do processo morrer
+process.on('uncaughtException', async (err) => {
+  console.error('[CRASH] uncaughtException:', err);
+  await alertarAdmin('crash', 'Servidor caiu (uncaughtException)', err.message + '\n' + (err.stack || '').slice(0, 400)).catch(() => {});
+  process.exit(1);
+});
+process.on('unhandledRejection', async (reason) => {
+  console.error('[CRASH] unhandledRejection:', reason);
+  await alertarAdmin('crash', 'Servidor com promise não tratada', String(reason).slice(0, 400)).catch(() => {});
 });
 
 async function processarMensagem(phone, mensagem, _body, opts = {}) {
@@ -440,6 +454,8 @@ app.listen(PORT, async () => {
     console.log('[Sheets] Cabeçalhos verificados.');
   } catch (e) {
     console.warn('[Sheets] Não foi possível verificar cabeçalhos:', e.message);
+    alertarAdmin('sheets-boot', 'Sheets indisponível ao iniciar', e.message).catch(() => {});
   }
   iniciarScheduler();
+  alertarBoot().catch(() => {}); // notifica que o servidor subiu
 });
