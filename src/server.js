@@ -73,9 +73,9 @@ app.post('/webhook', async (req, res) => {
 
 async function processarMensagem(phone, mensagem) {
   const historico = getHistory(phone, 10);
-  const lead = getLead(phone) ?? upsertLead(phone, { telefone: phone });
+  const lead = getLead(phone) ?? upsertLead(phone, {});
 
-  // Salva telefone automaticamente do WhatsApp
+  // Salva telefone automaticamente no JSON 'dados' (a tabela leads não tem coluna telefone)
   const dadosAtuais = JSON.parse(lead?.dados || '{}');
   if (!dadosAtuais.telefone) {
     mergeDados(phone, { telefone: phone });
@@ -84,14 +84,15 @@ async function processarMensagem(phone, mensagem) {
   saveMessage(phone, 'user', mensagem);
 
   const triagem = await triador(mensagem, historico);
-  const agentNome = lead?.proximo_agente ?? triagem.proximo_agente ?? 'recepcao';
+
+  // Se já agendou, ignora proximo_agente salvo e deixa o triador decidir
+  const proximoAgenteSalvo = lead?.agendamento_confirmado ? null : lead?.proximo_agente;
+  let agentNome = proximoAgenteSalvo ?? triagem.proximo_agente ?? 'recepcao';
+
+  // Guardião nunca atende cliente — só roda em background. Fallback para recepcao.
+  if (agentNome === 'guardiao') agentNome = 'recepcao';
 
   if (agentNome === 'encerrar') return;
-
-  if (agentNome === 'guardiao') {
-    await guardiao(phone, lead);
-    return;
-  }
 
   const agentFn = AGENTES[agentNome];
   if (!agentFn) {
@@ -113,13 +114,18 @@ async function processarMensagem(phone, mensagem) {
   if (resultado.lgpd_consentido) upsertLead(phone, { lgpd_consentido: 1 });
   if (resultado.agendamento_confirmado) upsertLead(phone, { agendamento_confirmado: 1 });
 
+  // Nunca salvar 'guardiao' como proximo_agente — quebra próximas mensagens do cliente
+  const proximoAgenteParaSalvar =
+    resultado.proximo_agente === 'guardiao' ? null : (resultado.proximo_agente ?? agentNome);
+
   upsertLead(phone, {
     estagio: triagem.estagio,
-    proximo_agente: resultado.proximo_agente ?? agentNome,
+    proximo_agente: proximoAgenteParaSalvar,
     nome: resultado.dados_coletados?.nome || lead?.nome || '',
   });
 
-  if (resultado.agendamento_confirmado) {
+  // Guardião só dispara UMA vez (quando ainda não foi salvo), evitando duplicar Sheets/Calendar
+  if (resultado.agendamento_confirmado && !lead?.sheets_salvo) {
     const leadAtualizado = getLead(phone);
     guardiao(phone, leadAtualizado).catch((e) => console.error('[GUARDIÃO]', e.message));
   }

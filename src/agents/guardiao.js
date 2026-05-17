@@ -52,6 +52,12 @@ Retorne APENAS JSON válido:
 }
 
 export async function guardiao(phone, lead) {
+  // Trava de idempotência: se já salvou Sheets E Calendar, não roda de novo
+  if (lead?.sheets_salvo && lead?.calendar_salvo) {
+    console.log('[GUARDIÃO] Já processado anteriormente, ignorando.');
+    return;
+  }
+
   const dados = JSON.parse(lead?.dados || '{}');
   const prompt = getPromptGuardiao(dados, phone);
 
