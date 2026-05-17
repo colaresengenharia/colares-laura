@@ -147,7 +147,7 @@ export async function temConflito(dataInicioISO, ignoreEventId = null) {
   return { conflito: false, eventoBloqueador: null };
 }
 
-// Horário comercial por dia da semana (0=domingo, 1=segunda, ..., 6=sábado)
+// Horário comercial por dia da semana NO BRASIL (0=domingo, 1=segunda, ..., 6=sábado)
 const HORARIO_COMERCIAL = {
   1: { inicio: 8, fim: 17 },
   2: { inicio: 8, fim: 17 },
@@ -156,20 +156,46 @@ const HORARIO_COMERCIAL = {
   5: { inicio: 8, fim: 16 },
 };
 
+// Constrói uma Date para um horário específico no fuso de São Paulo (-03:00).
+// Necessário porque o servidor pode rodar em UTC e setHours() usaria o fuso do servidor.
+function makeBRTDate(year, monthIdx, day, hour, minute) {
+  const m = String(monthIdx + 1).padStart(2, '0');
+  const d = String(day).padStart(2, '0');
+  const hh = String(hour).padStart(2, '0');
+  const mm = String(minute).padStart(2, '0');
+  return new Date(`${year}-${m}-${d}T${hh}:${mm}:00-03:00`);
+}
+
+// Extrai (ano, mês, dia, dia-da-semana) de uma Date no fuso de São Paulo.
+function getBRTParts(date) {
+  const fmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short',
+  });
+  const parts = Object.fromEntries(fmt.formatToParts(date).map((p) => [p.type, p.value]));
+  const diaSemanaMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  return {
+    year: parseInt(parts.year, 10),
+    monthIdx: parseInt(parts.month, 10) - 1,
+    day: parseInt(parts.day, 10),
+    diaSemana: diaSemanaMap[parts.weekday] ?? 0,
+  };
+}
+
 // Retorna os próximos N slots realmente livres, considerando horário comercial,
 // duração da visita (90min) e buffer (2h). Procura a partir de dataPreferida.
 // Cada slot é um objeto Date no fuso horário do Brasil (-03:00).
 export async function proximosSlotsLivres(dataPreferida, n = 3, diasMax = 14) {
-  const STEP_MIN = 30; // gera candidatos de 30 em 30 min
+  const STEP_MIN = 30;
   const slots = [];
 
-  const inicio = dataPreferida ? new Date(dataPreferida) : new Date();
-  inicio.setHours(0, 0, 0, 0);
-  const fimJanela = new Date(inicio.getTime() + diasMax * 24 * 60 * 60_000);
+  // Janela ampla em UTC pra buscar eventos
+  const inicioBusca = dataPreferida ? new Date(dataPreferida) : new Date();
+  const fimBusca = new Date(inicioBusca.getTime() + (diasMax + 2) * 24 * 60 * 60_000);
 
   let eventos = [];
   try {
-    eventos = await listEventsBetween(inicio, fimJanela);
+    eventos = await listEventsBetween(inicioBusca, fimBusca);
   } catch (e) {
     console.warn('[CALENDAR] Falhou ao listar eventos para slots:', e.message);
   }
@@ -178,9 +204,11 @@ export async function proximosSlotsLivres(dataPreferida, n = 3, diasMax = 14) {
   const duracaoMs = DURACAO_VISITA_MIN * 60_000;
   const agora = new Date();
 
-  for (let dia = 0; dia < diasMax && slots.length < n; dia++) {
-    const data = new Date(inicio.getTime() + dia * 24 * 60 * 60_000);
-    const horario = HORARIO_COMERCIAL[data.getDay()];
+  // Itera dia a dia partindo do dia da dataPreferida no fuso BRT
+  for (let diaOffset = 0; diaOffset < diasMax && slots.length < n; diaOffset++) {
+    const baseDate = new Date(inicioBusca.getTime() + diaOffset * 24 * 60 * 60_000);
+    const { year, monthIdx, day, diaSemana } = getBRTParts(baseDate);
+    const horario = HORARIO_COMERCIAL[diaSemana];
     if (!horario) continue; // fim de semana
 
     for (
@@ -188,8 +216,7 @@ export async function proximosSlotsLivres(dataPreferida, n = 3, diasMax = 14) {
       min + DURACAO_VISITA_MIN <= horario.fim * 60 && slots.length < n;
       min += STEP_MIN
     ) {
-      const slotIni = new Date(data);
-      slotIni.setHours(Math.floor(min / 60), min % 60, 0, 0);
+      const slotIni = makeBRTDate(year, monthIdx, day, Math.floor(min / 60), min % 60);
       const slotFim = new Date(slotIni.getTime() + duracaoMs);
 
       // Não sugere horário no passado nem nas próximas 2h (tempo mínimo de aviso)
@@ -202,7 +229,7 @@ export async function proximosSlotsLivres(dataPreferida, n = 3, diasMax = 14) {
         return slotIni < new Date(eFim.getTime() + bufferMs) && slotFim > new Date(eIni.getTime() - bufferMs);
       });
 
-      if (!conflito) slots.push(new Date(slotIni));
+      if (!conflito) slots.push(slotIni);
     }
   }
 
