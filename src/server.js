@@ -56,7 +56,10 @@ app.get('/health', (_req, res) => {
 // Endpoint temporário de debug — usado pra inspecionar conversas durante testes
 // Protegido por token simples na query
 app.get('/debug/conversation/:phone', (req, res) => {
-  if (req.query.token !== process.env.DEBUG_TOKEN) return res.sendStatus(403);
+  const token = process.env.DEBUG_TOKEN;
+  // Se a variável não está setada, bloqueia tudo (endpoint desligado).
+  // Se está setada, só passa se o token bater exatamente.
+  if (!token || req.query.token !== token) return res.sendStatus(403);
   const phone = req.params.phone;
   const lead = getLead(phone);
   const historico = getHistory(phone, 50);
