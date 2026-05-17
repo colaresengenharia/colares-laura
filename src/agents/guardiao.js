@@ -22,8 +22,16 @@ export async function guardiao(phone, lead) {
   }
 
   if (resultado.googleCalendar && lead?.agendamento_confirmado) {
-    await createEvent(resultado.googleCalendar);
-    upsertLead(phone, { calendar_salvo: 1 });
+    try {
+      await createEvent(resultado.googleCalendar);
+      upsertLead(phone, { calendar_salvo: 1 });
+      console.log('[GUARDIÃO] Evento criado no Calendar.');
+    } catch (e) {
+      console.error('[GUARDIÃO] Erro ao criar evento no Calendar:', e.message);
+      console.error('[GUARDIÃO] Dados Calendar:', JSON.stringify(resultado.googleCalendar));
+    }
+  } else {
+    console.log('[GUARDIÃO] Calendar ignorado. agendamento_confirmado:', lead?.agendamento_confirmado, '| dados:', !!resultado.googleCalendar);
   }
 
   return resultado;

@@ -178,6 +178,12 @@ Retorne APENAS JSON válido:
 Receba os dados coletados pelos outros agentes e produza dois objetos JSON:
 um para o Google Sheets (linha do CRM) e outro para o Google Calendar (evento de visita).
 
+IMPORTANTE para o googleCalendar:
+- data_inicio deve estar no formato ISO 8601: "YYYY-MM-DDTHH:MM:00" (ex: "2026-05-18T12:00:00")
+- Se o agendamento for "amanhã", calcule a data correta baseado na data atual
+- A data atual é: ${new Date().toLocaleDateString('pt-BR')}
+- O fuso horário é America/Sao_Paulo (GMT-3)
+
 Retorne APENAS JSON válido:
 {
   "googleSheets": {
@@ -199,8 +205,7 @@ Retorne APENAS JSON válido:
   },
   "googleCalendar": {
     "titulo": "Visita Técnica — [NOME] | [SERVIÇO]",
-    "data_inicio": "",
-    "data_fim": "",
+    "data_inicio": "2026-05-18T12:00:00",
     "local": "",
     "descricao": ""
   }
