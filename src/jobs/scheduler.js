@@ -21,10 +21,10 @@ async function ciclo() {
 }
 
 export function iniciarScheduler() {
-  // Roda a cada hora cheia (00 min). Granularidade suficiente para janelas de 48h/5d/24h.
-  cron.schedule('0 * * * *', ciclo, { timezone: 'America/Sao_Paulo' });
-  console.log('[SCHEDULER] Cron iniciado (executa de hora em hora).');
+  // Roda a cada 5 min. Granularidade fina o suficiente para a janela de 15 min de reativação.
+  cron.schedule('*/5 * * * *', ciclo, { timezone: 'America/Sao_Paulo' });
+  console.log('[SCHEDULER] Cron iniciado (executa a cada 5 minutos).');
 
-  // Um disparo inicial 1 min após boot, pra não esperar até a próxima hora cheia
+  // Um disparo inicial 1 min após boot, pra não esperar até a próxima janela
   setTimeout(ciclo, 60_000);
 }

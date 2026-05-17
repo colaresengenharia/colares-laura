@@ -6,8 +6,11 @@ import {
   saveMessage,
 } from '../db/conversations.js';
 
-// Janelas: 48h após última mensagem do cliente (1ª tentativa), 5 dias (2ª tentativa)
-const JANELA_HORAS = [48, 5 * 24];
+// Janelas (em horas) após a última mensagem do cliente:
+// 1ª: 15 min (cutucada rápida, leve)
+// 2ª: 48h (lembrete do dia seguinte)
+// 3ª: 5 dias (última tentativa)
+const JANELA_HORAS = [0.25, 48, 5 * 24];
 
 function horasDesde(isoString) {
   if (!isoString) return Infinity;
@@ -17,12 +20,24 @@ function horasDesde(isoString) {
 
 function mensagemReativacao(tentativa, nome) {
   const primeiroNome = (nome || '').trim().split(' ')[0] || '';
-  const saudacao = primeiroNome ? `Oi, ${primeiroNome}!` : 'Oi!';
 
+  // 15 min: super leve, pergunta direta. Sem se identificar de novo.
   if (tentativa === 0) {
-    return `${saudacao} Aqui é a Laura, da Colares Engenharia. Conseguiu pensar sobre o que conversamos? Se precisar, estou por aqui. 😊`;
+    const variantes = primeiroNome
+      ? [`Tá aí, ${primeiroNome}?`, `${primeiroNome}, conseguiu ver minha mensagem?`, `Oi, ${primeiroNome}, tudo bem?`]
+      : [`Tá por aí?`, `Conseguiu ver minha mensagem?`, `Oi, tudo bem?`];
+    return variantes[Math.floor(Math.random() * variantes.length)];
   }
-  return `${saudacao} Passando rapidinho pra saber se ainda faz sentido seguirmos com a visita técnica. Se preferir, posso te enviar um material curto sobre como funciona o nosso atendimento.`;
+
+  // 48h: lembrete amigável
+  if (tentativa === 1) {
+    const saudacao = primeiroNome ? `Oi, ${primeiroNome}!` : 'Oi!';
+    return `${saudacao} Conseguiu pensar sobre o que a gente conversou? Posso te ajudar com mais alguma dúvida?`;
+  }
+
+  // 5 dias: última, mais formal
+  const saudacao = primeiroNome ? `Oi, ${primeiroNome}!` : 'Oi!';
+  return `${saudacao} Passando só pra saber se ainda faz sentido seguirmos com a visita. Se preferir, fico à disposição quando precisar. 🙏`;
 }
 
 export async function rodarReativacao() {
