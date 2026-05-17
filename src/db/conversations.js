@@ -17,7 +17,8 @@ export function getDb() {
 }
 
 function initSchema() {
-  getDb().exec(`
+  const d = getDb();
+  d.exec(`
     CREATE TABLE IF NOT EXISTS conversations (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       phone TEXT NOT NULL,
@@ -42,6 +43,50 @@ function initSchema() {
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
   `);
+
+  // Migrations idempotentes (ALTER se a coluna ainda não existir)
+  const cols = d.prepare(`PRAGMA table_info(leads)`).all().map((c) => c.name);
+  const addCol = (name, def) => {
+    if (!cols.includes(name)) d.exec(`ALTER TABLE leads ADD COLUMN ${name} ${def}`);
+  };
+  addCol('tentativas_reativacao', 'INTEGER DEFAULT 0');
+  addCol('ultima_reativacao_em', 'DATETIME');
+  addCol('lembrete_enviado', 'INTEGER DEFAULT 0');
+  addCol('desistido', 'INTEGER DEFAULT 0');
+}
+
+export function getUltimaMensagemUserEm(phone) {
+  const row = getDb()
+    .prepare(`
+      SELECT created_at FROM conversations
+      WHERE phone = ? AND role = 'user'
+      ORDER BY created_at DESC
+      LIMIT 1
+    `)
+    .get(phone);
+  return row?.created_at ?? null;
+}
+
+export function listLeadsParaReativar() {
+  // Leads que não fecharam agendamento, não desistiram, e ainda têm tentativas disponíveis
+  return getDb()
+    .prepare(`
+      SELECT * FROM leads
+      WHERE agendamento_confirmado = 0
+        AND desistido = 0
+        AND tentativas_reativacao < 2
+    `)
+    .all();
+}
+
+export function listLeadsParaLembrete() {
+  return getDb()
+    .prepare(`
+      SELECT * FROM leads
+      WHERE agendamento_confirmado = 1
+        AND lembrete_enviado = 0
+    `)
+    .all();
 }
 
 export function getHistory(phone, limit = 10) {

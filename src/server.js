@@ -16,6 +16,7 @@ import {
   mergeDados,
 } from './db/conversations.js';
 import { ensureHeaders } from './integrations/sheets.js';
+import { iniciarScheduler } from './jobs/scheduler.js';
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
@@ -146,4 +147,5 @@ app.listen(PORT, async () => {
   } catch (e) {
     console.warn('[Sheets] Não foi possível verificar cabeçalhos:', e.message);
   }
+  iniciarScheduler();
 });
