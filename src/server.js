@@ -267,9 +267,11 @@ async function processarMensagem(phone, mensagem, _body, opts = {}) {
 
   // Backup: detecta intenção de cancelamento mesmo se o agente esqueceu o flag.
   // Acontece quando cliente diz claramente "cancelar/desmarcar" E a Laura confirma o cancelamento na resposta.
+  // Importante: \b no FINAL do regex falha em "cancelada"/"cancelado" porque depois vem letra.
+  // Usamos prefixo "cancelad" sem \b final pra casar "cancelado/a/os/as".
   if (!resultado.cancelamento_solicitado && lead?.agendamento_confirmado) {
     const clienteQuerCancelar = /\b(cancelar|cancela|desmarcar|desmarca|desistir|desisto|n[ãa]o\s+vou\s+mais|tira\s+da\s+agenda)\b/i.test(mensagem);
-    const lauraConfirmouCancelamento = resultado.resposta_cliente && /\b(cancelad|cancelei|cancelo aqui|tirei da agenda)\b/i.test(resultado.resposta_cliente);
+    const lauraConfirmouCancelamento = resultado.resposta_cliente && /(\bcancelad|\bcancelei|cancelo aqui|tirei da agenda|visita cancelad)/i.test(resultado.resposta_cliente);
     if (clienteQuerCancelar && lauraConfirmouCancelamento) {
       console.log('[FALLBACK] Cancelamento detectado por regex (agente esqueceu o flag).');
       resultado.cancelamento_solicitado = true;
