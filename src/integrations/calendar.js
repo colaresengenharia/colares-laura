@@ -27,16 +27,12 @@ function parseDataInicio(valor) {
   throw new Error(`Formato de data não reconhecido: ${valor}`);
 }
 
-export async function createEvent(dados) {
-  const auth = getAuth();
-  const calendar = google.calendar({ version: 'v3', auth });
-  const calendarId = process.env.GOOGLE_CALENDAR_ID;
-
+function montarEventBody(dados) {
   const start = parseDataInicio(dados.data_inicio);
   const startDateTime = start.toISOString();
   const endDateTime = new Date(start.getTime() + 90 * 60 * 1000).toISOString();
 
-  const event = {
+  return {
     summary: dados.titulo,
     location: dados.local,
     description: dados.descricao,
@@ -50,7 +46,30 @@ export async function createEvent(dados) {
       ],
     },
   };
+}
 
-  const res = await calendar.events.insert({ calendarId, requestBody: event });
+export async function createEvent(dados) {
+  const auth = getAuth();
+  const calendar = google.calendar({ version: 'v3', auth });
+  const calendarId = process.env.GOOGLE_CALENDAR_ID;
+
+  const res = await calendar.events.insert({
+    calendarId,
+    requestBody: montarEventBody(dados),
+  });
+  return res.data;
+}
+
+export async function updateEvent(eventId, dados) {
+  if (!eventId) throw new Error('eventId obrigatório para update');
+  const auth = getAuth();
+  const calendar = google.calendar({ version: 'v3', auth });
+  const calendarId = process.env.GOOGLE_CALENDAR_ID;
+
+  const res = await calendar.events.update({
+    calendarId,
+    eventId,
+    requestBody: montarEventBody(dados),
+  });
   return res.data;
 }

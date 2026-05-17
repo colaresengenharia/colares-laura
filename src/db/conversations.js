@@ -53,6 +53,8 @@ function initSchema() {
   addCol('ultima_reativacao_em', 'DATETIME');
   addCol('lembrete_enviado', 'INTEGER DEFAULT 0');
   addCol('desistido', 'INTEGER DEFAULT 0');
+  addCol('sheets_row', 'INTEGER');
+  addCol('calendar_event_id', 'TEXT');
 }
 
 export function getUltimaMensagemUserEm(phone) {

@@ -178,8 +178,10 @@ async function processarMensagem(phone, mensagem) {
     nome: resultado.dados_coletados?.nome || lead?.nome || '',
   });
 
-  // Guardião só dispara UMA vez (quando ainda não foi salvo), evitando duplicar Sheets/Calendar
-  if (resultado.agendamento_confirmado && !lead?.sheets_salvo) {
+  // Dispara guardião sempre que houver confirmação. Ele decide:
+  // - se ainda não foi salvo: cria linha + evento (e guarda os IDs)
+  // - se já existe: atualiza a mesma linha e o mesmo evento
+  if (resultado.agendamento_confirmado) {
     const leadAtualizado = getLead(phone);
     guardiao(phone, leadAtualizado).catch((e) => console.error('[GUARDIÃO]', e.message));
   }

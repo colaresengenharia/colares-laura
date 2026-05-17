@@ -1,6 +1,6 @@
 import { callClaude } from '../integrations/anthropic.js';
-import { appendLead } from '../integrations/sheets.js';
-import { createEvent } from '../integrations/calendar.js';
+import { appendLead, updateLeadRow } from '../integrations/sheets.js';
+import { createEvent, updateEvent } from '../integrations/calendar.js';
 import { upsertLead } from '../db/conversations.js';
 
 function getPromptGuardiao(dados, phone) {
@@ -52,12 +52,6 @@ Retorne APENAS JSON válido:
 }
 
 export async function guardiao(phone, lead) {
-  // Trava de idempotência: se já salvou Sheets E Calendar, não roda de novo
-  if (lead?.sheets_salvo && lead?.calendar_salvo) {
-    console.log('[GUARDIÃO] Já processado anteriormente, ignorando.');
-    return;
-  }
-
   const dados = JSON.parse(lead?.dados || '{}');
   const prompt = getPromptGuardiao(dados, phone);
 
@@ -66,24 +60,40 @@ export async function guardiao(phone, lead) {
   ];
 
   const resultado = await callClaude(prompt, messages);
+  const ehUpdate = !!(lead?.sheets_row || lead?.calendar_event_id);
+  const acao = ehUpdate ? 'ATUALIZAÇÃO' : 'CRIAÇÃO';
+  console.log(`[GUARDIÃO] Modo: ${acao}`);
 
+  // --- SHEETS ---
   if (resultado.googleSheets) {
     try {
-      await appendLead({ ...resultado.googleSheets, telefone: phone });
-      upsertLead(phone, { sheets_salvo: 1 });
-      console.log('[GUARDIÃO] Lead salvo no Sheets.');
+      const payload = { ...resultado.googleSheets, telefone: phone };
+      if (lead?.sheets_row) {
+        await updateLeadRow(lead.sheets_row, payload);
+        console.log(`[GUARDIÃO] Lead ATUALIZADO no Sheets (linha ${lead.sheets_row}).`);
+      } else {
+        const rowNumber = await appendLead(payload);
+        upsertLead(phone, { sheets_salvo: 1, sheets_row: rowNumber });
+        console.log(`[GUARDIÃO] Lead salvo no Sheets (linha ${rowNumber}).`);
+      }
     } catch (e) {
       console.error('[GUARDIÃO] Erro no Sheets:', e.message);
     }
   }
 
+  // --- CALENDAR ---
   if (resultado.googleCalendar && lead?.agendamento_confirmado) {
     try {
-      await createEvent(resultado.googleCalendar);
-      upsertLead(phone, { calendar_salvo: 1 });
-      console.log('[GUARDIÃO] Evento criado no Calendar:', resultado.googleCalendar.data_inicio);
+      if (lead?.calendar_event_id) {
+        await updateEvent(lead.calendar_event_id, resultado.googleCalendar);
+        console.log(`[GUARDIÃO] Evento ATUALIZADO no Calendar (${lead.calendar_event_id}):`, resultado.googleCalendar.data_inicio);
+      } else {
+        const eventCriado = await createEvent(resultado.googleCalendar);
+        upsertLead(phone, { calendar_salvo: 1, calendar_event_id: eventCriado.id });
+        console.log(`[GUARDIÃO] Evento criado no Calendar (${eventCriado.id}):`, resultado.googleCalendar.data_inicio);
+      }
     } catch (e) {
-      console.error('[GUARDIÃO] Erro ao criar evento no Calendar:', e.message);
+      console.error('[GUARDIÃO] Erro no Calendar:', e.message);
       console.error('[GUARDIÃO] Dados Calendar:', JSON.stringify(resultado.googleCalendar));
     }
   } else {

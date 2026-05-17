@@ -35,12 +35,8 @@ export async function ensureHeaders() {
   }
 }
 
-export async function appendLead(dados) {
-  const auth = getAuth();
-  const sheets = google.sheets({ version: 'v4', auth });
-  const spreadsheetId = process.env.GOOGLE_SHEETS_ID;
-
-  const row = [
+function montarLinha(dados) {
+  return [
     dados.data_contato || new Date().toLocaleString('pt-BR'),
     dados.nome || '',
     dados.telefone || '',
@@ -57,11 +53,36 @@ export async function appendLead(dados) {
     dados.endereco || '',
     dados.observacoes || '',
   ];
+}
 
-  await sheets.spreadsheets.values.append({
+export async function appendLead(dados) {
+  const auth = getAuth();
+  const sheets = google.sheets({ version: 'v4', auth });
+  const spreadsheetId = process.env.GOOGLE_SHEETS_ID;
+
+  const res = await sheets.spreadsheets.values.append({
     spreadsheetId,
     range: `${SHEET_NAME}!A:O`,
     valueInputOption: 'USER_ENTERED',
-    requestBody: { values: [row] },
+    requestBody: { values: [montarLinha(dados)] },
+  });
+
+  // Extrai o número da linha do range retornado (ex: "Página1!A5:O5" → 5)
+  const updatedRange = res.data?.updates?.updatedRange || '';
+  const match = updatedRange.match(/![A-Z]+(\d+)/);
+  return match ? parseInt(match[1], 10) : null;
+}
+
+export async function updateLeadRow(rowNumber, dados) {
+  if (!rowNumber) throw new Error('rowNumber obrigatório para update');
+  const auth = getAuth();
+  const sheets = google.sheets({ version: 'v4', auth });
+  const spreadsheetId = process.env.GOOGLE_SHEETS_ID;
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `${SHEET_NAME}!A${rowNumber}:O${rowNumber}`,
+    valueInputOption: 'USER_ENTERED',
+    requestBody: { values: [montarLinha(dados)] },
   });
 }
