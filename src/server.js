@@ -26,6 +26,28 @@ const MENSAGEM_AUDIO_FALHOU = 'Recebi seu áudio, mas não consegui ouvi-lo dest
 
 const AGENTES = { recepcao, qualificador, tecnico, agendador };
 
+// Backup: tenta extrair nome quando o agente esquece de preencher dados_coletados.nome
+function extrairNomeFallback(mensagem) {
+  if (!mensagem) return null;
+  const padroes = [
+    /(?:meu\s+nome\s+(?:é|eh)|me\s+chamo|sou\s+(?:o|a)?|aqui\s+(?:é|eh)\s+(?:o|a)?|pode\s+me\s+chamar\s+de)\s+([A-ZÁÉÍÓÚÂÊÔÃÕÇa-záéíóúâêôãõç]+(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇa-záéíóúâêôãõç]+)?)/i,
+  ];
+  for (const re of padroes) {
+    const m = mensagem.match(re);
+    if (m && m[1]) {
+      return m[1].trim().split(/\s+/).slice(0, 2).join(' ');
+    }
+  }
+  return null;
+}
+
+// Backup: detecta consentimento LGPD em respostas afirmativas
+function consentiuLGPDFallback(mensagem) {
+  if (!mensagem) return false;
+  const re = /\b(sim|pode|claro|tudo\s+bem|ok|okay|autorizo|combinado|positivo|certo|de\s+acordo)\b/i;
+  return re.test(mensagem);
+}
+
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', ts: new Date().toISOString() });
 });
@@ -120,6 +142,27 @@ async function processarMensagem(phone, mensagem) {
   // Salva dados do agendamento (endereço, data, hora) para o Guardião usar
   if (resultado.dados_agendamento) {
     mergeDados(phone, resultado.dados_agendamento);
+  }
+
+  // Backup: se o agente esqueceu de extrair o nome, tenta via regex na mensagem do cliente
+  const nomeAtual = JSON.parse(getLead(phone)?.dados || '{}').nome;
+  if (!nomeAtual && !resultado.dados_coletados?.nome) {
+    const nomeFallback = extrairNomeFallback(mensagem);
+    if (nomeFallback) {
+      console.log(`[FALLBACK] Nome extraído via regex: ${nomeFallback}`);
+      mergeDados(phone, { nome: nomeFallback });
+    }
+  }
+
+  // Backup LGPD: se o agente acabou de enviar a mensagem de LGPD no histórico
+  // e o cliente respondeu afirmativamente, marca como consentido
+  if (!lead?.lgpd_consentido && !resultado.lgpd_consentido) {
+    const ultimaAssistant = [...historico].reverse().find((m) => m.role === 'assistant');
+    const lauraPedolGPD = ultimaAssistant && /registrar\s+seus\s+dados|lgpd|dados\s+de\s+contato/i.test(ultimaAssistant.content);
+    if (lauraPedolGPD && consentiuLGPDFallback(mensagem)) {
+      console.log('[FALLBACK] LGPD detectado via regex');
+      upsertLead(phone, { lgpd_consentido: 1 });
+    }
   }
 
   if (resultado.lgpd_consentido) upsertLead(phone, { lgpd_consentido: 1 });
