@@ -1,13 +1,13 @@
 import { google } from 'googleapis';
 
-// Voz primária: Wavenet-A — tom mais "brasileiro conversacional", menos "assistente virtual"
-const VOZ_PRIMARIA = 'pt-BR-Wavenet-A';
-// Fallback: Neural2-C — alternativa mais profissional, aceita controle de velocidade
-const VOZ_FALLBACK = 'pt-BR-Neural2-C';
+// Voz primária: Neural2-C — voz feminina mais madura/profissional disponível em PT-BR
+const VOZ_PRIMARIA = 'pt-BR-Neural2-C';
+// Fallback: Wavenet-C — alternativa mais conversacional
+const VOZ_FALLBACK = 'pt-BR-Wavenet-C';
 // Velocidade levemente abaixo do natural (1.0) para não soar apressada
 const SPEAKING_RATE = 0.95;
-// Pitch ligeiramente baixo para soar menos "infantil" / mais natural
-const PITCH = -1.0;
+// Pitch baixo (semitons): aproxima de uma voz mais grave / "rouca"
+const PITCH = -3.0;
 
 let cachedToken = null;
 let cachedTokenExpiresAt = 0;
