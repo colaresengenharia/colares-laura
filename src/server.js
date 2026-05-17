@@ -151,6 +151,7 @@ async function processarMensagem(phone, mensagem) {
     if (nomeFallback) {
       console.log(`[FALLBACK] Nome extraído via regex: ${nomeFallback}`);
       mergeDados(phone, { nome: nomeFallback });
+      upsertLead(phone, { nome: nomeFallback }); // também na coluna nome (não só no JSON dados)
     }
   }
 
