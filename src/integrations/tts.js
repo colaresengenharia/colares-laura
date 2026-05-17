@@ -4,10 +4,10 @@ import { google } from 'googleapis';
 const VOZ_PRIMARIA = 'pt-BR-Neural2-C';
 // Fallback: Wavenet-C — alternativa mais conversacional
 const VOZ_FALLBACK = 'pt-BR-Wavenet-C';
-// Velocidade levemente abaixo do natural (1.0) para não soar apressada
-const SPEAKING_RATE = 0.95;
+// Velocidade levemente acima do natural (1.0)
+const SPEAKING_RATE = 1.08;
 // Pitch baixo (semitons): aproxima de uma voz mais grave / "rouca"
-const PITCH = -3.0;
+const PITCH = -5.0;
 
 let cachedToken = null;
 let cachedTokenExpiresAt = 0;
