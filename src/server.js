@@ -256,16 +256,22 @@ async function processarMensagem(phone, mensagem, _body, opts = {}) {
   const triagem = await triador(mensagem, historico);
 
   // Roteamento por estado do lead:
-  // - Se JÁ AGENDOU (e não está em reagendamento ativo): vai pro pos_agendamento por padrão.
-  //   O triador pode override se identificar caso específico (ex: dúvida técnica).
+  // - Se JÁ AGENDOU: vai pro pos_agendamento por padrão.
+  // - Se é PRIMEIRA mensagem do cliente (lead sem nome ainda): SEMPRE recepção (pra coletar nome).
   // - Senão: usa proximo_agente salvo ou o que o triador decidiu.
   let agentNome;
+  const dadosLead = JSON.parse(lead?.dados || '{}');
+  const temNome = !!(dadosLead.nome || lead?.nome);
+  const ehPrimeiraInteracao = historico.filter((m) => m.role === 'assistant').length === 0;
+
   if (lead?.agendamento_confirmado) {
-    // Triador pode pedir explicitamente pos_agendamento, agendador (reagendar) ou tecnico (dúvida)
     const triadoValido = ['pos_agendamento', 'agendador', 'tecnico'].includes(triagem.proximo_agente)
       ? triagem.proximo_agente
       : 'pos_agendamento';
     agentNome = triadoValido;
+  } else if (ehPrimeiraInteracao && !temNome) {
+    // Força recepção pra garantir coleta do nome antes de qualquer outra coisa.
+    agentNome = 'recepcao';
   } else {
     const proximoAgenteSalvo = lead?.proximo_agente;
     agentNome = proximoAgenteSalvo ?? triagem.proximo_agente ?? 'recepcao';
