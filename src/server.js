@@ -55,6 +55,22 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+// Fila por telefone: garante que mensagens do mesmo cliente sejam processadas em ordem,
+// uma de cada vez. Resolve race condition quando o cliente manda 2-3 mensagens consecutivas.
+const filasPorTelefone = new Map();
+async function enfileirar(phone, fn) {
+  const anterior = filasPorTelefone.get(phone) || Promise.resolve();
+  const nova = anterior
+    .then(() => fn())
+    .catch((e) => console.error(`[FILA ${phone}] erro:`, e.message));
+  filasPorTelefone.set(phone, nova);
+  // Libera memória depois que a fila zerar
+  nova.finally(() => {
+    if (filasPorTelefone.get(phone) === nova) filasPorTelefone.delete(phone);
+  });
+  return nova;
+}
+
 // Monta uma frase natural oferecendo os horários livres ao cliente, sem revelar a agenda.
 // Agrupa por dia quando todos os slots são do mesmo dia.
 function montarMensagemSlots(slots) {
@@ -206,7 +222,7 @@ app.post('/webhook', async (req, res) => {
       console.log(`[AUDIO] Transcrito: ${transcricao.slice(0, 80)}`);
       // Flag de ambiente: TTS_ATIVO=true habilita resposta em áudio. Default = desligado.
       const ttsAtivo = String(process.env.TTS_ATIVO || '').toLowerCase() === 'true';
-      await processarMensagem(phone, transcricao, body, { responderEmAudio: ttsAtivo });
+      await enfileirar(phone, () => processarMensagem(phone, transcricao, body, { responderEmAudio: ttsAtivo }));
       return;
     }
 
@@ -214,7 +230,7 @@ app.post('/webhook', async (req, res) => {
     const mensagem = extractMessage(body);
     if (!mensagem) return;
 
-    await processarMensagem(phone, mensagem, body, { responderEmAudio: false });
+    await enfileirar(phone, () => processarMensagem(phone, mensagem, body, { responderEmAudio: false }));
   } catch (err) {
     console.error(`[ERRO] ${phone}:`, err.message);
     await sendMessage(phone, MENSAGEM_ERRO).catch(() => {});

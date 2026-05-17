@@ -1,9 +1,21 @@
 import Database from 'better-sqlite3';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DB_PATH = path.join(__dirname, '..', '..', 'conversations.db');
+
+// Caminho configurável via env var. Em produção (Railway) defina DB_PATH=/data/conversations.db
+// e configure um Volume montado em /data para persistência entre deploys.
+// Em desenvolvimento local, cai no caminho default na raiz do projeto.
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, '..', '..', 'conversations.db');
+
+// Garante que o diretório pai existe (necessário pra Railway Volume na 1ª inicialização)
+const DB_DIR = path.dirname(DB_PATH);
+if (!fs.existsSync(DB_DIR)) {
+  fs.mkdirSync(DB_DIR, { recursive: true });
+}
+console.log(`[DB] Usando banco em: ${DB_PATH}`);
 
 let db;
 

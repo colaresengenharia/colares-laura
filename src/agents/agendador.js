@@ -8,26 +8,33 @@ function getInfoTempo() {
   const horaAtual = agora.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' });
   const diaSemana = agora.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', weekday: 'long' });
 
-  // Calcula próximos 7 dias com nome do dia (em PT-BR)
-  const proximos7 = [];
-  for (let i = 1; i <= 7; i++) {
+  // Calcula próximos 14 dias com nome do dia (em PT-BR)
+  const proximos14 = [];
+  for (let i = 1; i <= 14; i++) {
     const d = new Date(agora.getTime() + i * 86400000);
     const dia = d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });
     const nome = d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', weekday: 'long' });
-    proximos7.push(`${nome}: ${dia}`);
+    proximos14.push(`${nome}: ${dia}`);
   }
 
   return `
 INFORMAÇÕES DE TEMPO REAIS (use estas datas, NUNCA invente):
 - Hoje: ${diaSemana}, ${dataAtual} ${horaAtual}
-- Próximos 7 dias:
-${proximos7.map((p) => '  - ' + p).join('\n')}
+- Próximos 14 dias (use ESTA tabela pra qualquer referência de data):
+${proximos14.map((p) => '  - ' + p).join('\n')}
 
-REGRAS:
+REGRAS DE INTERPRETAÇÃO DE DATA:
 - "amanhã" = o próximo dia depois de hoje
 - "segunda", "terça" etc. = a próxima ocorrência desse dia da semana a partir de amanhã
-- SEMPRE preencha "data" no formato DD/MM/AAAA usando as datas acima como referência.
+- "semana que vem" = começa na próxima segunda
+- "daqui a 2 semanas" = exatamente 14 dias a partir de hoje
+- SEMPRE preencha "data" no formato DD/MM/AAAA usando a tabela acima como referência.
+- SEMPRE verifique: o dia da semana que você fala precisa CASAR com a data que você fala. Ex: se hoje é domingo 17/05, "quinta" é 21/05 (não 22/05).
 - NUNCA use datas do passado.
+
+NÃO INVENTE RESTRIÇÕES:
+- NÃO diga que uma data está "fora da janela", "fora da agenda", "muito longe" — qualquer data nos próximos 14 dias úteis (segunda-sexta) está disponível, exceto as que já estão na lista de VISITAS JÁ AGENDADAS.
+- A única restrição real é: dias úteis (Seg-Qui 8h-17h, Sex 8h-16h), buffer de 2h entre visitas, e os horários da lista de visitas agendadas no contexto.
 `;
 }
 
