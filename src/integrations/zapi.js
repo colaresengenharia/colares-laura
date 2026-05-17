@@ -24,23 +24,11 @@ export async function sendAudio(phone, audioBase64) {
   });
 }
 
-// Mostra "digitando..." (ou "gravando áudio") no WhatsApp do cliente.
-// status: 'composing' (digitando), 'recording' (gravando), 'paused' (parou).
-// Falha silenciosa: se a Z-API rejeitar, não interrompe o envio da mensagem.
-export async function sendChatState(phone, status = 'composing') {
-  try {
-    await axios.post(
-      `${BASE_URL}/send-chat-state`,
-      { phone, chatState: status },
-      {
-        headers: { 'Content-Type': 'application/json', 'Client-Token': ZAPI_CLIENT_TOKEN },
-        timeout: 3000,
-      }
-    );
-  } catch (e) {
-    // Não é crítico — só loga e segue
-    console.warn(`[ZAPI] sendChatState(${status}) falhou: ${e.message}`);
-  }
+// "Digitando..." no WhatsApp NÃO é possível via API — é limitação da plataforma.
+// Esta função fica como no-op (não faz nada) para o resto do código não quebrar.
+// Se um dia o WhatsApp/Z-API liberar isso, basta reativar o axios aqui.
+export async function sendChatState(_phone, _status = 'composing') {
+  return; // no-op
 }
 
 export function extractPhone(webhookBody) {
