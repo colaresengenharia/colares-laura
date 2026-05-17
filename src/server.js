@@ -21,6 +21,7 @@ import { ensureHeaders } from './integrations/sheets.js';
 import { temConflito, proximosSlotsLivres, deleteEvent } from './integrations/calendar.js';
 import { iniciarScheduler } from './jobs/scheduler.js';
 import { alertarAdmin, alertarBoot } from './utils/alerta.js';
+import { extrairNomeFallback as extrairNomeUtil } from './utils/extracao.js';
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
@@ -30,20 +31,8 @@ const MENSAGEM_AUDIO_FALHOU = 'Recebi seu áudio, mas não consegui ouvi-lo dest
 
 const AGENTES = { recepcao, qualificador, tecnico, agendador, pos_agendamento };
 
-// Backup: tenta extrair nome quando o agente esquece de preencher dados_coletados.nome
-function extrairNomeFallback(mensagem) {
-  if (!mensagem) return null;
-  const padroes = [
-    /(?:meu\s+nome\s+(?:é|eh)|me\s+chamo|sou\s+(?:o|a)?|aqui\s+(?:é|eh)\s+(?:o|a)?|pode\s+me\s+chamar\s+de)\s+([A-ZÁÉÍÓÚÂÊÔÃÕÇa-záéíóúâêôãõç]+(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇa-záéíóúâêôãõç]+)?)/i,
-  ];
-  for (const re of padroes) {
-    const m = mensagem.match(re);
-    if (m && m[1]) {
-      return m[1].trim().split(/\s+/).slice(0, 2).join(' ');
-    }
-  }
-  return null;
-}
+// Reusa a versão compartilhada (mantém compatibilidade com chamadas locais antigas)
+const extrairNomeFallback = extrairNomeUtil;
 
 // Backup: detecta consentimento LGPD em respostas afirmativas
 function consentiuLGPDFallback(mensagem) {
