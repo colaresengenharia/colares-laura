@@ -28,12 +28,27 @@ export async function callClaude(systemPrompt, messages) {
 function parseJson(text) {
   // Tenta extrair JSON de qualquer lugar da resposta
   const match = text.match(/\{[\s\S]*\}/);
-  if (!match) throw new Error(`Claude não retornou JSON válido: ${text.slice(0, 100)}`);
-  try {
-    return JSON.parse(match[0]);
-  } catch {
-    // Tenta limpar e re-parsear
-    const cleaned = match[0].replace(/[\x00-\x1F\x7F]/g, ' ');
-    return JSON.parse(cleaned);
+  if (match) {
+    try {
+      return JSON.parse(match[0]);
+    } catch {
+      // Tenta limpar caracteres de controle e re-parsear
+      try {
+        const cleaned = match[0].replace(/[\x00-\x1F\x7F]/g, ' ');
+        return JSON.parse(cleaned);
+      } catch {
+        // Cai no fallback abaixo
+      }
+    }
   }
+
+  // Fallback: Claude respondeu texto puro (sem JSON) — usa o texto como resposta_cliente
+  // pra não deixar o cliente no vácuo. Loga warning pra investigarmos depois.
+  const fallback = (text || '').trim();
+  if (fallback) {
+    console.warn(`[CLAUDE] Resposta sem JSON, usando texto puro como resposta: ${fallback.slice(0, 100)}`);
+    return { resposta_cliente: fallback };
+  }
+
+  throw new Error('Claude retornou resposta vazia.');
 }
