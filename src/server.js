@@ -30,6 +30,16 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok', ts: new Date().toISOString() });
 });
 
+// Endpoint temporário de debug — usado pra inspecionar conversas durante testes
+// Protegido por token simples na query
+app.get('/debug/conversation/:phone', (req, res) => {
+  if (req.query.token !== process.env.DEBUG_TOKEN) return res.sendStatus(403);
+  const phone = req.params.phone;
+  const lead = getLead(phone);
+  const historico = getHistory(phone, 50);
+  res.json({ lead, historico });
+});
+
 app.post('/webhook', async (req, res) => {
   res.sendStatus(200);
 
