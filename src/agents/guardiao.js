@@ -1,6 +1,6 @@
 import { callClaude } from '../integrations/anthropic.js';
 import { appendLead, updateLeadRow } from '../integrations/sheets.js';
-import { createEvent, updateEvent } from '../integrations/calendar.js';
+import { createEvent, updateEvent, temConflito } from '../integrations/calendar.js';
 import { upsertLead } from '../db/conversations.js';
 
 function getPromptGuardiao(dados, phone) {
@@ -84,7 +84,13 @@ export async function guardiao(phone, lead) {
   // --- CALENDAR ---
   if (resultado.googleCalendar && lead?.agendamento_confirmado) {
     try {
-      if (lead?.calendar_event_id) {
+      // Trava final anti-conflito (race condition: 2 clientes confirmando ao mesmo tempo)
+      const check = await temConflito(resultado.googleCalendar.data_inicio, lead?.calendar_event_id || null);
+      if (check.conflito) {
+        console.error(`[GUARDIÃO] CONFLITO DETECTADO ao criar evento — bloqueador: ${check.eventoBloqueador?.summary} ${check.eventoBloqueador?.inicio}. Evento NÃO criado.`);
+        // Não cria o evento. Marca o lead como precisando ser reagendado.
+        upsertLead(phone, { agendamento_confirmado: 0, proximo_agente: 'agendador' });
+      } else if (lead?.calendar_event_id) {
         await updateEvent(lead.calendar_event_id, resultado.googleCalendar);
         console.log(`[GUARDIÃO] Evento ATUALIZADO no Calendar (${lead.calendar_event_id}):`, resultado.googleCalendar.data_inicio);
       } else {

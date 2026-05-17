@@ -17,6 +17,7 @@ import {
   mergeDados,
 } from './db/conversations.js';
 import { ensureHeaders } from './integrations/sheets.js';
+import { temConflito } from './integrations/calendar.js';
 import { iniciarScheduler } from './jobs/scheduler.js';
 
 const app = express();
@@ -51,6 +52,19 @@ function consentiuLGPDFallback(mensagem) {
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+// Converte data BR ("DD/MM/AAAA") + hora ("HH:MM") em string ISO no fuso de São Paulo (-03:00).
+// Retorna null se não conseguir interpretar.
+function combinarDataHoraSP(data, hora) {
+  if (!data || !hora) return null;
+  const mData = String(data).match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+  const mHora = String(hora).match(/(\d{1,2})[:h](\d{2})/);
+  if (!mData || !mHora) return null;
+  let [, d, m, y] = mData;
+  if (y.length === 2) y = '20' + y;
+  const [, hh, mm] = mHora;
+  return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}T${hh.padStart(2, '0')}:${mm}:00-03:00`;
 }
 
 // Divide uma resposta longa em 1-3 mensagens curtas, como gente real faz no WhatsApp
@@ -234,15 +248,44 @@ async function processarMensagem(phone, mensagem, _body, opts = {}) {
   // Trava: só confirma agendamento se tem hora EXATA (HH:MM ou H:MM)
   // Evita salvar visita com "de manhã" / "à tarde" sem hora certa
   if (resultado.agendamento_confirmado) {
+    const dadosLead = JSON.parse(getLead(phone)?.dados || '{}');
     const dadosDoAgendamento = resultado.dados_agendamento || {};
-    const hora = String(dadosDoAgendamento.hora || JSON.parse(getLead(phone)?.dados || '{}').hora || '');
+    const hora = String(dadosDoAgendamento.hora || dadosLead.hora || '');
+    const data = String(dadosDoAgendamento.data || dadosLead.data || '');
     const horaValida = /^\d{1,2}:\d{2}$/.test(hora.trim());
-    if (horaValida) {
-      upsertLead(phone, { agendamento_confirmado: 1 });
-    } else {
+
+    if (!horaValida) {
       console.warn(`[AGENDADOR] Bloqueada confirmacao sem hora exata. hora="${hora}"`);
       resultado.agendamento_confirmado = false;
       resultado.proximo_agente = 'agendador';
+    } else {
+      // Trava de conflito: verifica no Calendar se o horário está livre (90min + 2h de buffer)
+      try {
+        const dataISO = combinarDataHoraSP(data, hora);
+        if (dataISO) {
+          const leadAtual = getLead(phone);
+          const ignoreEventId = leadAtual?.calendar_event_id || null; // permite reagendar sem conflitar consigo
+          const check = await temConflito(dataISO, ignoreEventId);
+          if (check.conflito) {
+            const bloq = check.eventoBloqueador;
+            const ini = new Date(bloq.inicio).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+            console.warn(`[AGENDADOR] Conflito com visita ${bloq.summary} em ${ini}. Bloqueando confirmação.`);
+            resultado.agendamento_confirmado = false;
+            resultado.proximo_agente = 'agendador';
+            // Sobrescreve a resposta da Laura informando o conflito (de forma natural)
+            resultado.resposta_cliente = `Acabei de ver aqui que tenho um compromisso muito próximo desse horário e não vou conseguir te atender com tranquilidade. Posso oferecer outro horário no mesmo dia ou em outro dia próximo. Tem alguma preferência?`;
+          } else {
+            upsertLead(phone, { agendamento_confirmado: 1 });
+          }
+        } else {
+          // Não conseguiu interpretar data — confirma mesmo assim (melhor errar pra confirmar que pra bloquear)
+          upsertLead(phone, { agendamento_confirmado: 1 });
+        }
+      } catch (e) {
+        console.error('[AGENDADOR] Erro ao checar conflito no Calendar:', e.message);
+        // Em caso de erro na API, confirma mesmo assim — melhor confirmar que travar
+        upsertLead(phone, { agendamento_confirmado: 1 });
+      }
     }
   }
 

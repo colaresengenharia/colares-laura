@@ -1,5 +1,6 @@
 import { callClaude } from '../integrations/anthropic.js';
 import { prompts } from '../prompts/system-prompts.js';
+import { listarOcupadosProximosDias, BUFFER_ENTRE_VISITAS_MIN, DURACAO_VISITA_MIN } from '../integrations/calendar.js';
 
 function getInfoTempo() {
   const agora = new Date();
@@ -32,12 +33,26 @@ REGRAS:
 
 export async function agendador(mensagem, historico, lead, phone) {
   const dados = JSON.parse(lead?.dados || '{}');
+
+  // Busca compromissos já agendados nos próximos 7 dias para o Claude evitar conflitos
+  let ocupados = [];
+  try {
+    ocupados = await listarOcupadosProximosDias(7);
+  } catch (e) {
+    console.warn('[AGENDADOR] Falhou ao consultar Calendar:', e.message);
+  }
+
+  const blocoOcupados = ocupados.length
+    ? `\nVISITAS JÁ AGENDADAS (NÃO OFEREÇA NEM CONFIRME ESTES HORÁRIOS NEM HORÁRIOS PRÓXIMOS):\n${ocupados.map((o) => '  - ' + o).join('\n')}\n\nIMPORTANTE: cada visita dura ${DURACAO_VISITA_MIN} minutos. É preciso ter pelo menos ${BUFFER_ENTRE_VISITAS_MIN} minutos de intervalo antes E depois de cada visita já agendada (tempo de deslocamento em São Paulo). Se o cliente pedir um horário ocupado ou próximo demais, ofereça uma alternativa LIVRE.`
+    : '\nNão há visitas agendadas nos próximos 7 dias — qualquer horário comercial está livre.';
+
   const contexto = `
 Dados coletados: ${JSON.stringify(dados)}
 Telefone do cliente (WhatsApp): ${phone || dados.telefone || 'não identificado'}
 NÃO pergunte o telefone — já está registrado automaticamente.
 
 ${getInfoTempo()}
+${blocoOcupados}
 `;
 
   const messages = [

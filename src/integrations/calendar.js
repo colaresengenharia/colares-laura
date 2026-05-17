@@ -73,3 +73,81 @@ export async function updateEvent(eventId, dados) {
   });
   return res.data;
 }
+
+// --- Regras de disponibilidade ---
+export const DURACAO_VISITA_MIN = 90;
+export const BUFFER_ENTRE_VISITAS_MIN = 120;
+
+// Lista todos os eventos do calendário entre duas datas
+export async function listEventsBetween(startDate, endDate) {
+  const auth = getAuth();
+  const calendar = google.calendar({ version: 'v3', auth });
+  const calendarId = process.env.GOOGLE_CALENDAR_ID;
+
+  const res = await calendar.events.list({
+    calendarId,
+    timeMin: startDate.toISOString(),
+    timeMax: endDate.toISOString(),
+    singleEvents: true,
+    orderBy: 'startTime',
+    maxResults: 250,
+  });
+  return res.data.items || [];
+}
+
+// Verifica se um horário tem conflito (já existe visita próxima considerando o buffer).
+// Retorna { conflito: bool, eventoBloqueador: {summary, inicio, fim} | null }.
+// Se ignoreEventId for passado, ignora aquele evento (útil ao reagendar — não conflitua consigo mesmo).
+export async function temConflito(dataInicioISO, ignoreEventId = null) {
+  const novoInicio = new Date(dataInicioISO);
+  const novoFim = new Date(novoInicio.getTime() + DURACAO_VISITA_MIN * 60_000);
+
+  // Busca eventos numa janela ampla ao redor (24h antes e depois) — suficiente pra detectar conflitos
+  const janelaInicio = new Date(novoInicio.getTime() - 24 * 60 * 60_000);
+  const janelaFim = new Date(novoFim.getTime() + 24 * 60 * 60_000);
+  const eventos = await listEventsBetween(janelaInicio, janelaFim);
+
+  for (const e of eventos) {
+    if (ignoreEventId && e.id === ignoreEventId) continue;
+    if (!e.start?.dateTime || !e.end?.dateTime) continue; // ignora eventos dia-inteiro
+
+    const eIni = new Date(e.start.dateTime);
+    const eFim = new Date(e.end.dateTime);
+    const bufferMs = BUFFER_ENTRE_VISITAS_MIN * 60_000;
+    const proibidoIni = new Date(eIni.getTime() - bufferMs);
+    const proibidoFim = new Date(eFim.getTime() + bufferMs);
+
+    // Conflito = sobreposição da nova visita com a janela proibida do evento existente
+    if (novoInicio < proibidoFim && novoFim > proibidoIni) {
+      return {
+        conflito: true,
+        eventoBloqueador: {
+          summary: e.summary || 'Visita',
+          inicio: eIni.toISOString(),
+          fim: eFim.toISOString(),
+        },
+      };
+    }
+  }
+
+  return { conflito: false, eventoBloqueador: null };
+}
+
+// Lista compromissos dos próximos N dias num formato compacto pra inserir no prompt do agendador
+export async function listarOcupadosProximosDias(dias = 7) {
+  const agora = new Date();
+  const fim = new Date(agora.getTime() + dias * 24 * 60 * 60_000);
+  const eventos = await listEventsBetween(agora, fim);
+  return eventos
+    .filter((e) => e.start?.dateTime && e.end?.dateTime)
+    .map((e) => {
+      const ini = new Date(e.start.dateTime);
+      const fim = new Date(e.end.dateTime);
+      const fmt = (d) =>
+        d.toLocaleString('pt-BR', {
+          timeZone: 'America/Sao_Paulo',
+          day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+        });
+      return `${fmt(ini)} até ${fmt(fim)}`;
+    });
+}
