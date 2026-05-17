@@ -169,7 +169,21 @@ async function processarMensagem(phone, mensagem, _body, opts = {}) {
   }
 
   if (resultado.lgpd_consentido) upsertLead(phone, { lgpd_consentido: 1 });
-  if (resultado.agendamento_confirmado) upsertLead(phone, { agendamento_confirmado: 1 });
+
+  // Trava: só confirma agendamento se tem hora EXATA (HH:MM ou H:MM)
+  // Evita salvar visita com "de manhã" / "à tarde" sem hora certa
+  if (resultado.agendamento_confirmado) {
+    const dadosDoAgendamento = resultado.dados_agendamento || {};
+    const hora = String(dadosDoAgendamento.hora || JSON.parse(getLead(phone)?.dados || '{}').hora || '');
+    const horaValida = /^\d{1,2}:\d{2}$/.test(hora.trim());
+    if (horaValida) {
+      upsertLead(phone, { agendamento_confirmado: 1 });
+    } else {
+      console.warn(`[AGENDADOR] Bloqueada confirmacao sem hora exata. hora="${hora}"`);
+      resultado.agendamento_confirmado = false;
+      resultado.proximo_agente = 'agendador';
+    }
+  }
 
   // Nunca salvar 'guardiao' como proximo_agente — quebra próximas mensagens do cliente
   const proximoAgenteParaSalvar =
