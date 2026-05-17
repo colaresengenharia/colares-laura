@@ -240,15 +240,15 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
-// Crashes não capturados — alerta o admin antes do processo morrer
-process.on('uncaughtException', async (err) => {
-  console.error('[CRASH] uncaughtException:', err);
-  await alertarAdmin('crash', 'Servidor caiu (uncaughtException)', err.message + '\n' + (err.stack || '').slice(0, 400)).catch(() => {});
-  process.exit(1);
+// Erros não capturados — só LOGA, não mata o processo (process.exit(1) gerava loop de crash).
+// O alerta é disparado em "background" sem await pra não bloquear.
+process.on('uncaughtException', (err) => {
+  console.error('[ERRO-NAO-CAPTURADO]', err);
+  alertarAdmin('crash', 'Erro não capturado no servidor', err.message + '\n' + (err.stack || '').slice(0, 400)).catch(() => {});
 });
-process.on('unhandledRejection', async (reason) => {
-  console.error('[CRASH] unhandledRejection:', reason);
-  await alertarAdmin('crash', 'Servidor com promise não tratada', String(reason).slice(0, 400)).catch(() => {});
+process.on('unhandledRejection', (reason) => {
+  console.error('[PROMISE-NAO-TRATADA]', reason);
+  alertarAdmin('crash', 'Promise não tratada', String(reason).slice(0, 400)).catch(() => {});
 });
 
 async function processarMensagem(phone, mensagem, _body, opts = {}) {
