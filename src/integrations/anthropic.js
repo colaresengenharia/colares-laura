@@ -2,26 +2,6 @@ import Anthropic from '@anthropic-ai/sdk';
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-export async function transcribeAudio(base64Audio) {
-  try {
-    const response = await client.messages.create({
-      model: MODEL,
-      max_tokens: 500,
-      messages: [{
-        role: 'user',
-        content: [
-          { type: 'text', text: 'Transcreva este áudio em português brasileiro. Responda apenas com a transcrição exata do que foi dito, sem comentários.' },
-          { type: 'document', source: { type: 'base64', media_type: 'audio/ogg', data: base64Audio } },
-        ],
-      }],
-    });
-    return response.content[0]?.text?.trim() ?? null;
-  } catch (e) {
-    console.error('[AUDIO] Transcrição falhou:', e.message);
-    return null;
-  }
-}
-
 const MODEL = 'claude-sonnet-4-6';
 const MAX_TOKENS = 1024;
 

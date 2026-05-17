@@ -21,24 +21,31 @@ export function extractMessage(webhookBody) {
 }
 
 export function isAudio(webhookBody) {
-  return (
-    webhookBody?.type === 'audio' ||
-    webhookBody?.audio === true ||
-    !!webhookBody?.audio?.audioUrl ||
-    (typeof webhookBody?.body === 'string' && webhookBody.body.startsWith('data:audio'))
-  );
+  if (!webhookBody) return false;
+  const type = webhookBody.type;
+  if (type === 'audio' || type === 'ptt') return true;
+  if (webhookBody.audio === true) return true;
+  if (webhookBody.audio?.audioUrl) return true;
+  if (webhookBody.audioUrl) return true;
+  if (typeof webhookBody.mimetype === 'string' && webhookBody.mimetype.startsWith('audio/')) return true;
+  if (typeof webhookBody.body === 'string' && webhookBody.body.startsWith('data:audio')) return true;
+  return false;
 }
 
 export async function downloadAudioBase64(webhookBody) {
-  // Formato 1: áudio já em base64 no campo body
+  // Formato 1: base64 inline no campo body
   if (typeof webhookBody?.body === 'string' && webhookBody.body.startsWith('data:audio')) {
     return webhookBody.body.split(',')[1];
   }
 
   // Formato 2: URL do áudio
   const url = webhookBody?.audio?.audioUrl ?? webhookBody?.audioUrl ?? null;
-  if (!url) return null;
+  if (!url) {
+    console.warn('[AUDIO] Nenhuma URL de áudio encontrada. body.audio:', JSON.stringify(webhookBody?.audio));
+    return null;
+  }
 
+  console.log('[AUDIO] Baixando de:', url.slice(0, 80));
   const resp = await axios.get(url, {
     responseType: 'arraybuffer',
     headers: { 'Client-Token': ZAPI_CLIENT_TOKEN },

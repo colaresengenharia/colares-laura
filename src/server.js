@@ -7,7 +7,7 @@ import { tecnico } from './agents/tecnico.js';
 import { agendador } from './agents/agendador.js';
 import { guardiao } from './agents/guardiao.js';
 import { sendMessage, extractPhone, extractMessage, isAudio, downloadAudioBase64 } from './integrations/zapi.js';
-import { transcribeAudio } from './integrations/anthropic.js';
+import { transcribeAudio } from './integrations/speech.js';
 import {
   getHistory,
   saveMessage,
@@ -39,6 +39,9 @@ app.post('/webhook', async (req, res) => {
   if (!phone) return;
 
   try {
+    // Log de todos os webhooks para diagnóstico
+    console.log(`[WEBHOOK] phone=${phone} type=${body?.type} hasAudio=${JSON.stringify(body?.audio)?.slice(0, 80)}`);
+
     // Mensagem de áudio
     if (isAudio(body)) {
       console.log(`[AUDIO] Recebido de ${phone}`);
