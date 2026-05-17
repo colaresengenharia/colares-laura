@@ -5,6 +5,7 @@ import { recepcao } from './agents/recepcao.js';
 import { qualificador } from './agents/qualificador.js';
 import { tecnico } from './agents/tecnico.js';
 import { agendador } from './agents/agendador.js';
+import { pos_agendamento } from './agents/pos_agendamento.js';
 import { guardiao } from './agents/guardiao.js';
 import { sendMessage, sendAudio, sendChatState, extractPhone, extractMessage, isAudio, downloadAudioBase64 } from './integrations/zapi.js';
 import { transcribeAudio } from './integrations/speech.js';
@@ -17,7 +18,7 @@ import {
   mergeDados,
 } from './db/conversations.js';
 import { ensureHeaders } from './integrations/sheets.js';
-import { temConflito } from './integrations/calendar.js';
+import { temConflito, proximosSlotsLivres, deleteEvent } from './integrations/calendar.js';
 import { iniciarScheduler } from './jobs/scheduler.js';
 
 const app = express();
@@ -26,7 +27,7 @@ app.use(express.json({ limit: '10mb' }));
 const MENSAGEM_ERRO = 'Desculpe, tive uma instabilidade aqui. Tenta de novo em instantes. 🙏';
 const MENSAGEM_AUDIO_FALHOU = 'Recebi seu áudio, mas não consegui ouvi-lo desta vez. Pode me escrever? 😊';
 
-const AGENTES = { recepcao, qualificador, tecnico, agendador };
+const AGENTES = { recepcao, qualificador, tecnico, agendador, pos_agendamento };
 
 // Backup: tenta extrair nome quando o agente esquece de preencher dados_coletados.nome
 function extrairNomeFallback(mensagem) {
@@ -52,6 +53,46 @@ function consentiuLGPDFallback(mensagem) {
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+// Monta uma frase natural oferecendo os horários livres ao cliente, sem revelar a agenda.
+// Agrupa por dia quando todos os slots são do mesmo dia.
+function montarMensagemSlots(slots) {
+  if (!slots || slots.length === 0) {
+    return 'Esse horário não está disponível e nos próximos dias minha agenda está cheia. Pode me sugerir outra data daqui a uns dias?';
+  }
+
+  const fmtHora = (d) => d.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' });
+  const fmtDia = (d) => {
+    const hoje = new Date();
+    hoje.setHours(0, 0, 0, 0);
+    const amanha = new Date(hoje.getTime() + 86400_000);
+    const dpAmanha = new Date(hoje.getTime() + 2 * 86400_000);
+    const meioDia = new Date(d);
+    meioDia.setHours(0, 0, 0, 0);
+
+    if (meioDia.getTime() === hoje.getTime()) return 'hoje';
+    if (meioDia.getTime() === amanha.getTime()) return 'amanhã';
+    if (meioDia.getTime() === dpAmanha.getTime()) return 'depois de amanhã';
+    return d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', weekday: 'long', day: '2-digit', month: '2-digit' });
+  };
+
+  // Se todos os slots forem do mesmo dia, agrupa
+  const diasUnicos = new Set(slots.map((s) => {
+    const d = new Date(s);
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  }));
+
+  if (diasUnicos.size === 1) {
+    const dia = fmtDia(slots[0]);
+    const horas = slots.map(fmtHora).join(', ').replace(/, ([^,]+)$/, ' ou $1');
+    return `Esse horário não está disponível. ${dia.charAt(0).toUpperCase() + dia.slice(1)} eu tenho ${horas}. Algum desses funciona pra você?`;
+  }
+
+  // Dias diferentes — lista cada um
+  const opcoes = slots.map((s) => `${fmtDia(s)} às ${fmtHora(s)}`).join(', ').replace(/, ([^,]+)$/, ' ou $1');
+  return `Esse horário não está disponível. Posso te oferecer ${opcoes}. Qual prefere?`;
 }
 
 // Converte data BR ("DD/MM/AAAA") + hora ("HH:MM") em string ISO no fuso de São Paulo (-03:00).
@@ -195,12 +236,24 @@ async function processarMensagem(phone, mensagem, _body, opts = {}) {
 
   const triagem = await triador(mensagem, historico);
 
-  // Se já agendou, ignora proximo_agente salvo e deixa o triador decidir
-  const proximoAgenteSalvo = lead?.agendamento_confirmado ? null : lead?.proximo_agente;
-  let agentNome = proximoAgenteSalvo ?? triagem.proximo_agente ?? 'recepcao';
+  // Roteamento por estado do lead:
+  // - Se JÁ AGENDOU (e não está em reagendamento ativo): vai pro pos_agendamento por padrão.
+  //   O triador pode override se identificar caso específico (ex: dúvida técnica).
+  // - Senão: usa proximo_agente salvo ou o que o triador decidiu.
+  let agentNome;
+  if (lead?.agendamento_confirmado) {
+    // Triador pode pedir explicitamente pos_agendamento, agendador (reagendar) ou tecnico (dúvida)
+    const triadoValido = ['pos_agendamento', 'agendador', 'tecnico'].includes(triagem.proximo_agente)
+      ? triagem.proximo_agente
+      : 'pos_agendamento';
+    agentNome = triadoValido;
+  } else {
+    const proximoAgenteSalvo = lead?.proximo_agente;
+    agentNome = proximoAgenteSalvo ?? triagem.proximo_agente ?? 'recepcao';
+  }
 
-  // Guardião nunca atende cliente — só roda em background. Fallback para recepcao.
-  if (agentNome === 'guardiao') agentNome = 'recepcao';
+  // Guardião nunca atende cliente — só roda em background. Fallback seguro.
+  if (agentNome === 'guardiao') agentNome = lead?.agendamento_confirmado ? 'pos_agendamento' : 'recepcao';
 
   if (agentNome === 'encerrar') return;
 
@@ -211,6 +264,22 @@ async function processarMensagem(phone, mensagem, _body, opts = {}) {
   }
 
   const resultado = await agentFn(mensagem, historico, lead, phone);
+
+  // Cancelamento de visita (vem do pos_agendamento)
+  if (resultado.cancelamento_solicitado && lead?.calendar_event_id) {
+    try {
+      await deleteEvent(lead.calendar_event_id);
+      console.log(`[CANCELAMENTO] Evento ${lead.calendar_event_id} deletado do Calendar.`);
+    } catch (e) {
+      console.error('[CANCELAMENTO] Falhou ao deletar evento:', e.message);
+    }
+    upsertLead(phone, {
+      agendamento_confirmado: 0,
+      calendar_event_id: null,
+      calendar_salvo: 0,
+      desistido: 1, // para não disparar reativações
+    });
+  }
 
   if (resultado.dados_coletados) {
     mergeDados(phone, resultado.dados_coletados);
@@ -267,13 +336,13 @@ async function processarMensagem(phone, mensagem, _body, opts = {}) {
           const ignoreEventId = leadAtual?.calendar_event_id || null; // permite reagendar sem conflitar consigo
           const check = await temConflito(dataISO, ignoreEventId);
           if (check.conflito) {
-            const bloq = check.eventoBloqueador;
-            const ini = new Date(bloq.inicio).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-            console.warn(`[AGENDADOR] Conflito com visita ${bloq.summary} em ${ini}. Bloqueando confirmação.`);
+            console.warn(`[AGENDADOR] Conflito detectado em ${dataISO}. Sugerindo slots livres.`);
             resultado.agendamento_confirmado = false;
             resultado.proximo_agente = 'agendador';
-            // Sobrescreve a resposta da Laura informando o conflito (de forma natural)
-            resultado.resposta_cliente = `Acabei de ver aqui que tenho um compromisso muito próximo desse horário e não vou conseguir te atender com tranquilidade. Posso oferecer outro horário no mesmo dia ou em outro dia próximo. Tem alguma preferência?`;
+            // Calcula 3 próximos horários realmente livres a partir do dia pedido
+            const dataPedida = new Date(dataISO);
+            const slots = await proximosSlotsLivres(dataPedida, 3, 14);
+            resultado.resposta_cliente = montarMensagemSlots(slots);
           } else {
             upsertLead(phone, { agendamento_confirmado: 1 });
           }

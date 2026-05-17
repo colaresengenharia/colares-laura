@@ -74,6 +74,20 @@ export async function updateEvent(eventId, dados) {
   return res.data;
 }
 
+export async function deleteEvent(eventId) {
+  if (!eventId) return; // nada pra fazer
+  const auth = getAuth();
+  const calendar = google.calendar({ version: 'v3', auth });
+  const calendarId = process.env.GOOGLE_CALENDAR_ID;
+
+  try {
+    await calendar.events.delete({ calendarId, eventId });
+  } catch (e) {
+    // 410 Gone = já deletado, ignora
+    if (e.code !== 410 && e.response?.status !== 410) throw e;
+  }
+}
+
 // --- Regras de disponibilidade ---
 export const DURACAO_VISITA_MIN = 90;
 export const BUFFER_ENTRE_VISITAS_MIN = 120;
@@ -131,6 +145,68 @@ export async function temConflito(dataInicioISO, ignoreEventId = null) {
   }
 
   return { conflito: false, eventoBloqueador: null };
+}
+
+// Horário comercial por dia da semana (0=domingo, 1=segunda, ..., 6=sábado)
+const HORARIO_COMERCIAL = {
+  1: { inicio: 8, fim: 17 },
+  2: { inicio: 8, fim: 17 },
+  3: { inicio: 8, fim: 17 },
+  4: { inicio: 8, fim: 17 },
+  5: { inicio: 8, fim: 16 },
+};
+
+// Retorna os próximos N slots realmente livres, considerando horário comercial,
+// duração da visita (90min) e buffer (2h). Procura a partir de dataPreferida.
+// Cada slot é um objeto Date no fuso horário do Brasil (-03:00).
+export async function proximosSlotsLivres(dataPreferida, n = 3, diasMax = 14) {
+  const STEP_MIN = 30; // gera candidatos de 30 em 30 min
+  const slots = [];
+
+  const inicio = dataPreferida ? new Date(dataPreferida) : new Date();
+  inicio.setHours(0, 0, 0, 0);
+  const fimJanela = new Date(inicio.getTime() + diasMax * 24 * 60 * 60_000);
+
+  let eventos = [];
+  try {
+    eventos = await listEventsBetween(inicio, fimJanela);
+  } catch (e) {
+    console.warn('[CALENDAR] Falhou ao listar eventos para slots:', e.message);
+  }
+
+  const bufferMs = BUFFER_ENTRE_VISITAS_MIN * 60_000;
+  const duracaoMs = DURACAO_VISITA_MIN * 60_000;
+  const agora = new Date();
+
+  for (let dia = 0; dia < diasMax && slots.length < n; dia++) {
+    const data = new Date(inicio.getTime() + dia * 24 * 60 * 60_000);
+    const horario = HORARIO_COMERCIAL[data.getDay()];
+    if (!horario) continue; // fim de semana
+
+    for (
+      let min = horario.inicio * 60;
+      min + DURACAO_VISITA_MIN <= horario.fim * 60 && slots.length < n;
+      min += STEP_MIN
+    ) {
+      const slotIni = new Date(data);
+      slotIni.setHours(Math.floor(min / 60), min % 60, 0, 0);
+      const slotFim = new Date(slotIni.getTime() + duracaoMs);
+
+      // Não sugere horário no passado nem nas próximas 2h (tempo mínimo de aviso)
+      if (slotIni.getTime() < agora.getTime() + 2 * 60 * 60_000) continue;
+
+      const conflito = eventos.some((e) => {
+        if (!e.start?.dateTime) return false;
+        const eIni = new Date(e.start.dateTime);
+        const eFim = new Date(e.end.dateTime);
+        return slotIni < new Date(eFim.getTime() + bufferMs) && slotFim > new Date(eIni.getTime() - bufferMs);
+      });
+
+      if (!conflito) slots.push(new Date(slotIni));
+    }
+  }
+
+  return slots;
 }
 
 // Lista compromissos dos próximos N dias num formato compacto pra inserir no prompt do agendador
