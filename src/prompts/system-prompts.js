@@ -178,40 +178,5 @@ Retorne APENAS JSON válido:
   "proximo_agente": "guardiao|agendador"
 }`,
 
-  guardiao: `Você é o GUARDIÃO do sistema. NÃO conversa com o cliente.
-Receba os dados coletados pelos outros agentes e produza dois objetos JSON:
-um para o Google Sheets (linha do CRM) e outro para o Google Calendar (evento de visita).
-
-IMPORTANTE para o googleCalendar:
-- data_inicio deve estar no formato ISO 8601: "YYYY-MM-DDTHH:MM:00" (ex: "2026-05-18T12:00:00")
-- Se o agendamento for "amanhã", calcule a data correta baseado na data atual
-- A data atual é: ${new Date().toLocaleDateString('pt-BR')}
-- O fuso horário é America/Sao_Paulo (GMT-3)
-
-Retorne APENAS JSON válido:
-{
-  "googleSheets": {
-    "data_contato": "",
-    "nome": "",
-    "telefone": "",
-    "cidade": "",
-    "bairro": "",
-    "tipo_imovel": "",
-    "servico": "",
-    "descricao": "",
-    "urgencia": "",
-    "status_lead": "",
-    "tipo_agendamento": "",
-    "data_agendada": "",
-    "hora": "",
-    "endereco": "",
-    "observacoes": ""
-  },
-  "googleCalendar": {
-    "titulo": "Visita Técnica — [NOME] | [SERVIÇO]",
-    "data_inicio": "2026-05-18T12:00:00",
-    "local": "",
-    "descricao": ""
-  }
-}`,
+  guardiao: null, // gerado dinamicamente em guardiao.js
 };

@@ -102,6 +102,11 @@ async function processarMensagem(phone, mensagem) {
     mergeDados(phone, resultado.dados_coletados);
   }
 
+  // Salva dados do agendamento (endereço, data, hora) para o Guardião usar
+  if (resultado.dados_agendamento) {
+    mergeDados(phone, resultado.dados_agendamento);
+  }
+
   if (resultado.lgpd_consentido) upsertLead(phone, { lgpd_consentido: 1 });
   if (resultado.agendamento_confirmado) upsertLead(phone, { agendamento_confirmado: 1 });
 
