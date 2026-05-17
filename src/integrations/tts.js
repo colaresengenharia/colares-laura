@@ -1,11 +1,13 @@
 import { google } from 'googleapis';
 
-// Voz primária: Chirp 3 HD (a mais humana disponível em PT-BR)
-const VOZ_PRIMARIA = 'pt-BR-Chirp3-HD-Leda';
-// Fallback: Neural2-C (também ótima, aceita controle de velocidade)
+// Voz primária: Wavenet-A — tom mais "brasileiro conversacional", menos "assistente virtual"
+const VOZ_PRIMARIA = 'pt-BR-Wavenet-A';
+// Fallback: Neural2-C — alternativa mais profissional, aceita controle de velocidade
 const VOZ_FALLBACK = 'pt-BR-Neural2-C';
 // Velocidade levemente abaixo do natural (1.0) para não soar apressada
-const SPEAKING_RATE = 0.92;
+const SPEAKING_RATE = 0.95;
+// Pitch ligeiramente baixo para soar menos "infantil" / mais natural
+const PITCH = -1.0;
 
 let cachedToken = null;
 let cachedTokenExpiresAt = 0;
@@ -51,21 +53,27 @@ export async function sintetizarVoz(texto) {
     .replace(/\s+/g, ' ')
     .trim();
 
-  // Tentativa 1: Chirp 3 HD (não aceita speakingRate)
+  const audioConfig = {
+    audioEncoding: 'OGG_OPUS',
+    speakingRate: SPEAKING_RATE,
+    pitch: PITCH,
+  };
+
+  // Tentativa 1: voz primária (Wavenet-A — mais conversacional brasileira)
   try {
     return await callSynthesize({
       input: { text: textoLimpo },
       voice: { languageCode: 'pt-BR', name: VOZ_PRIMARIA },
-      audioConfig: { audioEncoding: 'OGG_OPUS' },
+      audioConfig,
     });
   } catch (e) {
     console.warn(`[TTS] Voz primária falhou (${e.status}): ${e.message}. Caindo pra fallback.`);
   }
 
-  // Tentativa 2: Neural2-C com speakingRate controlado
+  // Tentativa 2: fallback (Neural2-C)
   return await callSynthesize({
     input: { text: textoLimpo },
     voice: { languageCode: 'pt-BR', name: VOZ_FALLBACK },
-    audioConfig: { audioEncoding: 'OGG_OPUS', speakingRate: SPEAKING_RATE },
+    audioConfig,
   });
 }
