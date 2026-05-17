@@ -90,7 +90,9 @@ app.post('/webhook', async (req, res) => {
         return;
       }
       console.log(`[AUDIO] Transcrito: ${transcricao.slice(0, 80)}`);
-      await processarMensagem(phone, transcricao, body, { responderEmAudio: true });
+      // Flag de ambiente: TTS_ATIVO=true habilita resposta em áudio. Default = desligado.
+      const ttsAtivo = String(process.env.TTS_ATIVO || '').toLowerCase() === 'true';
+      await processarMensagem(phone, transcricao, body, { responderEmAudio: ttsAtivo });
       return;
     }
 
