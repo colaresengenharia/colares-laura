@@ -6,7 +6,8 @@ import { qualificador } from './agents/qualificador.js';
 import { tecnico } from './agents/tecnico.js';
 import { agendador } from './agents/agendador.js';
 import { guardiao } from './agents/guardiao.js';
-import { sendMessage, extractPhone, extractMessage } from './integrations/zapi.js';
+import { sendMessage, extractPhone, extractMessage, isAudio, downloadAudioBase64 } from './integrations/zapi.js';
+import { transcribeAudio } from './integrations/anthropic.js';
 import {
   getHistory,
   saveMessage,
@@ -17,17 +18,12 @@ import {
 import { ensureHeaders } from './integrations/sheets.js';
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
-const MENSAGEM_ERRO =
-  'Desculpe, tive uma instabilidade aqui. Por favor, tente novamente em alguns instantes. 🙏';
+const MENSAGEM_ERRO = 'Desculpe, tive uma instabilidade aqui. Tenta de novo em instantes. 🙏';
+const MENSAGEM_AUDIO_FALHOU = 'Recebi seu áudio, mas não consegui ouvi-lo desta vez. Pode me escrever? 😊';
 
-const AGENTES = {
-  recepcao,
-  qualificador,
-  tecnico,
-  agendador,
-};
+const AGENTES = { recepcao, qualificador, tecnico, agendador };
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', ts: new Date().toISOString() });
@@ -37,17 +33,35 @@ app.post('/webhook', async (req, res) => {
   res.sendStatus(200);
 
   const body = req.body;
-
-  // Ignora mensagens enviadas pela própria instância
   if (body?.fromMe || body?.isGroup) return;
 
   const phone = extractPhone(body);
-  const mensagem = extractMessage(body);
-
-  if (!phone || !mensagem) return;
+  if (!phone) return;
 
   try {
-    await processarMensagem(phone, mensagem);
+    // Mensagem de áudio
+    if (isAudio(body)) {
+      console.log(`[AUDIO] Recebido de ${phone}`);
+      const base64 = await downloadAudioBase64(body);
+      if (!base64) {
+        await sendMessage(phone, MENSAGEM_AUDIO_FALHOU);
+        return;
+      }
+      const transcricao = await transcribeAudio(base64);
+      if (!transcricao) {
+        await sendMessage(phone, MENSAGEM_AUDIO_FALHOU);
+        return;
+      }
+      console.log(`[AUDIO] Transcrito: ${transcricao.slice(0, 80)}`);
+      await processarMensagem(phone, transcricao, body);
+      return;
+    }
+
+    // Mensagem de texto
+    const mensagem = extractMessage(body);
+    if (!mensagem) return;
+
+    await processarMensagem(phone, mensagem, body);
   } catch (err) {
     console.error(`[ERRO] ${phone}:`, err.message);
     await sendMessage(phone, MENSAGEM_ERRO).catch(() => {});
@@ -56,18 +70,20 @@ app.post('/webhook', async (req, res) => {
 
 async function processarMensagem(phone, mensagem) {
   const historico = getHistory(phone, 10);
-  const lead = getLead(phone) ?? upsertLead(phone);
+  const lead = getLead(phone) ?? upsertLead(phone, { telefone: phone });
+
+  // Salva telefone automaticamente do WhatsApp
+  const dadosAtuais = JSON.parse(lead?.dados || '{}');
+  if (!dadosAtuais.telefone) {
+    mergeDados(phone, { telefone: phone });
+  }
 
   saveMessage(phone, 'user', mensagem);
 
-  // 1. Triador decide o próximo agente
   const triagem = await triador(mensagem, historico);
   const agentNome = lead?.proximo_agente ?? triagem.proximo_agente ?? 'recepcao';
 
   if (agentNome === 'encerrar') return;
-
-  // 2. Agente especializado responde
-  let resultado;
 
   if (agentNome === 'guardiao') {
     await guardiao(phone, lead);
@@ -80,37 +96,26 @@ async function processarMensagem(phone, mensagem) {
     return;
   }
 
-  resultado = await agentFn(mensagem, historico, lead);
+  const resultado = await agentFn(mensagem, historico, lead, phone);
 
-  // 3. Salvar dados coletados
   if (resultado.dados_coletados) {
     mergeDados(phone, resultado.dados_coletados);
   }
 
-  if (resultado.lgpd_consentido) {
-    upsertLead(phone, { lgpd_consentido: 1 });
-  }
+  if (resultado.lgpd_consentido) upsertLead(phone, { lgpd_consentido: 1 });
+  if (resultado.agendamento_confirmado) upsertLead(phone, { agendamento_confirmado: 1 });
 
-  if (resultado.agendamento_confirmado) {
-    upsertLead(phone, { agendamento_confirmado: 1 });
-  }
-
-  const proximoAgente = resultado.proximo_agente ?? agentNome;
   upsertLead(phone, {
     estagio: triagem.estagio,
-    proximo_agente: proximoAgente,
+    proximo_agente: resultado.proximo_agente ?? agentNome,
     nome: resultado.dados_coletados?.nome || lead?.nome || '',
   });
 
-  // 4. Se agendamento confirmado, aciona o Guardião em background
   if (resultado.agendamento_confirmado) {
     const leadAtualizado = getLead(phone);
-    guardiao(phone, leadAtualizado).catch((e) =>
-      console.error('[GUARDIÃO]', e.message)
-    );
+    guardiao(phone, leadAtualizado).catch((e) => console.error('[GUARDIÃO]', e.message));
   }
 
-  // 5. Envia resposta ao cliente
   const resposta = resultado.resposta_cliente;
   if (resposta) {
     await sendMessage(phone, resposta);

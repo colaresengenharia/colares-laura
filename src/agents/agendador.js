@@ -1,8 +1,13 @@
 import { callClaude } from '../integrations/anthropic.js';
 import { prompts } from '../prompts/system-prompts.js';
 
-export async function agendador(mensagem, historico, lead) {
-  const contexto = `Dados já coletados: ${JSON.stringify(JSON.parse(lead?.dados || '{}'))}`;
+export async function agendador(mensagem, historico, lead, phone) {
+  const dados = JSON.parse(lead?.dados || '{}');
+  const contexto = `
+Dados coletados: ${JSON.stringify(dados)}
+Telefone do cliente (WhatsApp): ${phone || dados.telefone || 'não identificado'}
+NÃO pergunte o telefone — já está registrado automaticamente.
+`;
 
   const messages = [
     ...historico.map((m) => ({ role: m.role, content: m.content })),
