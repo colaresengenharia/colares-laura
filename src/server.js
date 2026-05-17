@@ -6,7 +6,7 @@ import { qualificador } from './agents/qualificador.js';
 import { tecnico } from './agents/tecnico.js';
 import { agendador } from './agents/agendador.js';
 import { guardiao } from './agents/guardiao.js';
-import { sendMessage, sendAudio, extractPhone, extractMessage, isAudio, downloadAudioBase64 } from './integrations/zapi.js';
+import { sendMessage, sendAudio, sendChatState, extractPhone, extractMessage, isAudio, downloadAudioBase64 } from './integrations/zapi.js';
 import { transcribeAudio } from './integrations/speech.js';
 import { sintetizarVoz } from './integrations/tts.js';
 import {
@@ -47,6 +47,62 @@ function consentiuLGPDFallback(mensagem) {
   if (!mensagem) return false;
   const re = /\b(sim|pode|claro|tudo\s+bem|ok|okay|autorizo|combinado|positivo|certo|de\s+acordo)\b/i;
   return re.test(mensagem);
+}
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+// Divide uma resposta longa em 1-3 mensagens curtas, como gente real faz no WhatsApp
+function dividirEmMensagens(texto) {
+  if (!texto) return [];
+  const limpo = texto.trim();
+
+  // Curto demais: 1 mensagem só
+  if (limpo.length < 70) return [limpo];
+
+  // Quebra por parágrafos (linhas em branco) primeiro — respeita formatação intencional
+  const paragrafos = limpo.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+  if (paragrafos.length >= 2 && paragrafos.length <= 3) return paragrafos;
+  if (paragrafos.length > 3) {
+    // Junta paragrafos extras no último
+    return [paragrafos[0], paragrafos[1], paragrafos.slice(2).join('\n\n')];
+  }
+
+  // 1 parágrafo só: tenta quebrar por frase
+  const frases = limpo.split(/(?<=[.!?])\s+(?=[A-ZÁÉÍÓÚÂÊÔÃÕÇ])/).map((f) => f.trim()).filter(Boolean);
+  if (frases.length === 1) return [limpo];
+  if (frases.length === 2) return frases;
+
+  // 3+ frases: agrupa em 2 mensagens balanceadas
+  const meio = Math.ceil(frases.length / 2);
+  return [frases.slice(0, meio).join(' '), frases.slice(meio).join(' ')];
+}
+
+// Calcula quanto tempo "digitar" uma mensagem (delay proporcional ao tamanho)
+function calcularDelayDigitacao(texto) {
+  // ~30ms por caractere, mínimo 1500ms, máximo 4500ms
+  const base = (texto?.length || 0) * 30;
+  return Math.min(4500, Math.max(1500, base));
+}
+
+// Envia uma resposta da Laura como se fosse uma pessoa digitando:
+// - mostra "digitando..."
+// - aguarda tempo proporcional ao tamanho
+// - se a mensagem for longa, divide em 2-3 partes com pausa entre elas
+async function enviarComoHumano(phone, texto) {
+  const partes = dividirEmMensagens(texto);
+  for (let i = 0; i < partes.length; i++) {
+    const parte = partes[i];
+    await sendChatState(phone, 'composing');
+    await sleep(calcularDelayDigitacao(parte));
+    await sendMessage(phone, parte);
+    // Pausa entre mensagens (700-1300ms aleatório) para parecer natural
+    if (i < partes.length - 1) {
+      await sleep(700 + Math.floor(Math.random() * 600));
+    }
+  }
+  await sendChatState(phone, 'paused');
 }
 
 app.get('/health', (_req, res) => {
@@ -213,20 +269,22 @@ async function processarMensagem(phone, mensagem, _body, opts = {}) {
     // Se o cliente mandou áudio, responde também em áudio (com fallback pra texto)
     if (responderEmAudio) {
       try {
+        await sendChatState(phone, 'recording'); // "gravando áudio..."
         const audioBase64 = await sintetizarVoz(resposta);
         if (audioBase64) {
           await sendAudio(phone, audioBase64);
+          await sendChatState(phone, 'paused');
           console.log(`[TTS] Áudio enviado pra ${phone} (${resposta.length} chars)`);
         } else {
           console.warn('[TTS] Síntese retornou vazio, caindo pra texto');
-          await sendMessage(phone, resposta);
+          await enviarComoHumano(phone, resposta);
         }
       } catch (e) {
         console.error('[TTS] Falhou, enviando como texto:', e.message);
-        await sendMessage(phone, resposta);
+        await enviarComoHumano(phone, resposta);
       }
     } else {
-      await sendMessage(phone, resposta);
+      await enviarComoHumano(phone, resposta);
     }
     saveMessage(phone, 'assistant', resposta, agentNome);
   }
