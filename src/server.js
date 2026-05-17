@@ -6,8 +6,9 @@ import { qualificador } from './agents/qualificador.js';
 import { tecnico } from './agents/tecnico.js';
 import { agendador } from './agents/agendador.js';
 import { guardiao } from './agents/guardiao.js';
-import { sendMessage, extractPhone, extractMessage, isAudio, downloadAudioBase64 } from './integrations/zapi.js';
+import { sendMessage, sendAudio, extractPhone, extractMessage, isAudio, downloadAudioBase64 } from './integrations/zapi.js';
 import { transcribeAudio } from './integrations/speech.js';
+import { sintetizarVoz } from './integrations/tts.js';
 import {
   getHistory,
   saveMessage,
@@ -89,7 +90,7 @@ app.post('/webhook', async (req, res) => {
         return;
       }
       console.log(`[AUDIO] Transcrito: ${transcricao.slice(0, 80)}`);
-      await processarMensagem(phone, transcricao, body);
+      await processarMensagem(phone, transcricao, body, { responderEmAudio: true });
       return;
     }
 
@@ -97,14 +98,15 @@ app.post('/webhook', async (req, res) => {
     const mensagem = extractMessage(body);
     if (!mensagem) return;
 
-    await processarMensagem(phone, mensagem, body);
+    await processarMensagem(phone, mensagem, body, { responderEmAudio: false });
   } catch (err) {
     console.error(`[ERRO] ${phone}:`, err.message);
     await sendMessage(phone, MENSAGEM_ERRO).catch(() => {});
   }
 });
 
-async function processarMensagem(phone, mensagem) {
+async function processarMensagem(phone, mensagem, _body, opts = {}) {
+  const responderEmAudio = !!opts.responderEmAudio;
   const historico = getHistory(phone, 10);
   const lead = getLead(phone) ?? upsertLead(phone, {});
 
@@ -189,7 +191,24 @@ async function processarMensagem(phone, mensagem) {
 
   const resposta = resultado.resposta_cliente;
   if (resposta) {
-    await sendMessage(phone, resposta);
+    // Se o cliente mandou áudio, responde também em áudio (com fallback pra texto)
+    if (responderEmAudio) {
+      try {
+        const audioBase64 = await sintetizarVoz(resposta);
+        if (audioBase64) {
+          await sendAudio(phone, audioBase64);
+          console.log(`[TTS] Áudio enviado pra ${phone} (${resposta.length} chars)`);
+        } else {
+          console.warn('[TTS] Síntese retornou vazio, caindo pra texto');
+          await sendMessage(phone, resposta);
+        }
+      } catch (e) {
+        console.error('[TTS] Falhou, enviando como texto:', e.message);
+        await sendMessage(phone, resposta);
+      }
+    } else {
+      await sendMessage(phone, resposta);
+    }
     saveMessage(phone, 'assistant', resposta, agentNome);
   }
 }

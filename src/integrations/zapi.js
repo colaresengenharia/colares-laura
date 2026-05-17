@@ -12,6 +12,18 @@ export async function sendMessage(phone, message) {
   );
 }
 
+// Envia áudio (PTT — push-to-talk, formato OGG/OPUS) como mensagem de voz no WhatsApp
+export async function sendAudio(phone, audioBase64) {
+  const payload = {
+    phone,
+    audio: `data:audio/ogg;base64,${audioBase64}`,
+    waveform: true, // gera o "gráfico" da onda igual mensagem de voz nativa
+  };
+  await axios.post(`${BASE_URL}/send-audio`, payload, {
+    headers: { 'Content-Type': 'application/json', 'Client-Token': ZAPI_CLIENT_TOKEN },
+  });
+}
+
 export function extractPhone(webhookBody) {
   return webhookBody?.phone ?? webhookBody?.from ?? null;
 }
