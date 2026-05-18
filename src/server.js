@@ -190,30 +190,18 @@ function dividirEmMensagens(texto) {
   return [frases.slice(0, meio).join(' '), frases.slice(meio).join(' ')];
 }
 
-// Calcula quanto tempo "digitar" uma mensagem (delay proporcional ao tamanho)
-function calcularDelayDigitacao(texto) {
-  // ~30ms por caractere, mínimo 1500ms, máximo 4500ms
-  const base = (texto?.length || 0) * 30;
-  return Math.min(4500, Math.max(1500, base));
-}
-
-// Envia uma resposta da Laura como se fosse uma pessoa digitando:
-// - mostra "digitando..."
-// - aguarda tempo proporcional ao tamanho
-// - se a mensagem for longa, divide em 2-3 partes com pausa entre elas
+// Envia a resposta da Laura. Como o WhatsApp não suporta "digitando..." via API,
+// removemos os delays artificiais — só mantém uma pausa CURTA entre mensagens divididas
+// (pra cliente conseguir ler a primeira parte antes da segunda chegar).
 async function enviarComoHumano(phone, texto) {
   const partes = dividirEmMensagens(texto);
   for (let i = 0; i < partes.length; i++) {
-    const parte = partes[i];
-    await sendChatState(phone, 'composing');
-    await sleep(calcularDelayDigitacao(parte));
-    await sendMessage(phone, parte);
-    // Pausa entre mensagens (700-1300ms aleatório) para parecer natural
+    await sendMessage(phone, partes[i]);
+    // Pausa curtinha (300-500ms) entre mensagens — só pra não chegarem coladas
     if (i < partes.length - 1) {
-      await sleep(700 + Math.floor(Math.random() * 600));
+      await sleep(300 + Math.floor(Math.random() * 200));
     }
   }
-  await sendChatState(phone, 'paused');
 }
 
 app.get('/health', (_req, res) => {
@@ -286,7 +274,9 @@ app.post('/webhook', async (req, res) => {
       }
       console.log(`[IMAGE] Descrição: ${descricao.slice(0, 80)}`);
       // Compõe um texto que o agente vai entender como "cliente mandou foto + o que aparece"
-      const textoComposto = `[O cliente enviou uma foto. Descrição da imagem: ${descricao}]${caption ? `\nLegenda que ele escreveu: "${caption}"` : ''}`;
+      const textoComposto = caption
+        ? `[O cliente enviou uma foto COM esta legenda: "${caption}"]\n\nDescrição técnica do que aparece na imagem:\n${descricao}\n\nINSTRUÇÃO: responda comentando o que viu na foto E o que ele disse na legenda. Demonstre que você "olhou" a imagem.`
+        : `[O cliente enviou uma foto SEM nenhuma mensagem escrita junto.]\n\nDescrição técnica do que aparece na imagem:\n${descricao}\n\nINSTRUÇÃO: responda comentando especificamente o que você viu na foto (mostre que olhou). Se identificou problema técnico, mencione isso de forma simples e ofereça a visita. Se a foto for ambígua, pergunte gentilmente o que ele gostaria de saber sobre o que mostrou.`;
       await enfileirar(phone, () => processarMensagem(phone, textoComposto, body));
       return;
     }

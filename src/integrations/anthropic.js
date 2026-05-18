@@ -11,12 +11,21 @@ export async function descreverImagem(base64, mediaType = 'image/jpeg') {
   try {
     const response = await client.messages.create({
       model: MODEL,
-      max_tokens: 300,
+      max_tokens: 500,
       messages: [{
         role: 'user',
         content: [
           { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
-          { type: 'text', text: 'Esta é uma foto que um cliente enviou pra uma empresa de engenharia e construção. Descreva em 2-3 frases em português brasileiro: o que aparece na imagem, sinais técnicos relevantes (trincas, infiltração, corrosão, descolamento, problema estrutural, parte específica do imóvel, etc) e em qual cômodo/região do imóvel parece estar. Seja objetiva e técnica. Responda apenas com a descrição.' }
+          { type: 'text', text: `Esta é uma foto enviada por um cliente para uma empresa de engenharia/construção em São Paulo. O cliente NÃO escreveu mensagem — só mandou a foto. Você precisa entender o que ele provavelmente quer mostrar para a Laura responder bem.
+
+Analise CUIDADOSAMENTE a imagem e descreva em português brasileiro em até 4 frases, cobrindo (na ordem):
+
+1. ONDE foi tirada: qual cômodo ou parte do imóvel (sala, banheiro, fachada, laje, garagem, parede externa, teto, pilar, viga, sacada, telhado, área externa, etc).
+2. O QUE aparece: descreva objetivamente o que se vê (paredes, piso, teto, estrutura visível, móveis, etc).
+3. PROBLEMAS TÉCNICOS visíveis: trincas (finas/largas/diagonais/horizontais), infiltração (manchas, mofo, bolor, descolamento de pintura, eflorescência), corrosão de armadura (manchas de ferrugem, concreto estufado), fissuras estruturais, descolamento de revestimento, umidade ascendente, danos estruturais, etc. SEJA ESPECÍFICO.
+4. PROVÁVEL INTENÇÃO DO CLIENTE: o que ele está perguntando/mostrando? (ex: "está mostrando uma infiltração na laje do banheiro pra pedir orçamento de recuperação", "está mostrando trincas em pilar pra avaliação estrutural", "está mostrando um cômodo que quer reformar", etc).
+
+Se não conseguir identificar problema técnico claro, diga isso explicitamente. Seja técnica, objetiva e completa. Responda apenas com a descrição/análise (sem preâmbulos).` }
         ],
       }],
     });
