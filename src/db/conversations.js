@@ -8,18 +8,20 @@ let schemaPromise = null;
 
 function getPool() {
   if (!pool) {
-    if (!process.env.DATABASE_URL) {
-      throw new Error('DATABASE_URL não configurada — adicione um serviço PostgreSQL ao projeto Railway');
+    // Aceita DATABASE_URL ou DATABASE_PUBLIC_URL (Railway pode ter qualquer um dos dois nomes)
+    const connectionString = process.env.DATABASE_URL || process.env.DATABASE_PUBLIC_URL;
+    if (!connectionString) {
+      throw new Error('DATABASE_URL (ou DATABASE_PUBLIC_URL) não configurada — adicione um serviço PostgreSQL ao projeto Railway');
     }
     // Railway conexão interna não precisa SSL; externa sim. Por segurança, ssl ligado com rejectUnauthorized:false.
-    const isInternal = /\.railway\.internal/.test(process.env.DATABASE_URL);
+    const isInternal = /\.railway\.internal/.test(connectionString);
     pool = new Pool({
-      connectionString: process.env.DATABASE_URL,
+      connectionString,
       ssl: isInternal ? false : { rejectUnauthorized: false },
       max: 5, // pool pequeno (servidor leve)
     });
     pool.on('error', (err) => console.error('[DB] Pool error:', err));
-    console.log('[DB] Pool PostgreSQL inicializado');
+    console.log(`[DB] Pool PostgreSQL inicializado (${isInternal ? 'interno' : 'público'})`);
   }
   return pool;
 }
