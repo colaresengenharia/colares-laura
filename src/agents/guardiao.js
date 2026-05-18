@@ -74,7 +74,7 @@ export async function guardiao(phone, lead) {
         console.log(`[GUARDIÃO] Lead ATUALIZADO no Sheets (linha ${lead.sheets_row}).`);
       } else {
         const rowNumber = await appendLead(payload);
-        upsertLead(phone, { sheets_salvo: 1, sheets_row: rowNumber });
+        await upsertLead(phone, { sheets_salvo: 1, sheets_row: rowNumber });
         console.log(`[GUARDIÃO] Lead salvo no Sheets (linha ${rowNumber}).`);
       }
     } catch (e) {
@@ -91,13 +91,13 @@ export async function guardiao(phone, lead) {
       if (check.conflito) {
         console.error(`[GUARDIÃO] CONFLITO DETECTADO ao criar evento — bloqueador: ${check.eventoBloqueador?.summary} ${check.eventoBloqueador?.inicio}. Evento NÃO criado.`);
         // Não cria o evento. Marca o lead como precisando ser reagendado.
-        upsertLead(phone, { agendamento_confirmado: 0, proximo_agente: 'agendador' });
+        await upsertLead(phone, { agendamento_confirmado: 0, proximo_agente: 'agendador' });
       } else if (lead?.calendar_event_id) {
         await updateEvent(lead.calendar_event_id, resultado.googleCalendar);
         console.log(`[GUARDIÃO] Evento ATUALIZADO no Calendar (${lead.calendar_event_id}):`, resultado.googleCalendar.data_inicio);
       } else {
         const eventCriado = await createEvent(resultado.googleCalendar);
-        upsertLead(phone, { calendar_salvo: 1, calendar_event_id: eventCriado.id });
+        await upsertLead(phone, { calendar_salvo: 1, calendar_event_id: eventCriado.id });
         console.log(`[GUARDIÃO] Evento criado no Calendar (${eventCriado.id}):`, resultado.googleCalendar.data_inicio);
       }
     } catch (e) {

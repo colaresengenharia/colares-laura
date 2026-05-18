@@ -12,10 +12,14 @@ import {
 // 3ª: 5 dias (última tentativa)
 const JANELA_HORAS = [0.25, 48, 5 * 24];
 
-function horasDesde(isoString) {
-  if (!isoString) return Infinity;
-  const ms = Date.now() - new Date(isoString.replace(' ', 'T') + 'Z').getTime();
-  return ms / (1000 * 60 * 60);
+// Aceita Date object (do pg) ou string ISO/SQLite
+function horasDesde(valor) {
+  if (!valor) return Infinity;
+  let d;
+  if (valor instanceof Date) d = valor;
+  else if (typeof valor === 'string') d = new Date(valor.includes('T') ? valor : valor.replace(' ', 'T') + 'Z');
+  else d = new Date(valor);
+  return (Date.now() - d.getTime()) / (1000 * 60 * 60);
 }
 
 function mensagemReativacao(tentativa, nome) {
@@ -41,7 +45,7 @@ function mensagemReativacao(tentativa, nome) {
 }
 
 export async function rodarReativacao() {
-  const leads = listLeadsParaReativar();
+  const leads = await listLeadsParaReativar();
   let enviados = 0;
 
   for (const lead of leads) {
@@ -51,7 +55,7 @@ export async function rodarReativacao() {
       if (janela == null) continue;
 
       // Referência: última mensagem do cliente (ou criação do lead, se nunca falou)
-      const ref = getUltimaMensagemUserEm(lead.phone) || lead.created_at;
+      const ref = (await getUltimaMensagemUserEm(lead.phone)) || lead.created_at;
       const horas = horasDesde(ref);
 
       if (horas < janela) continue;
@@ -64,12 +68,12 @@ export async function rodarReativacao() {
 
       const msg = mensagemReativacao(tentativaIdx, lead.nome);
       await sendMessage(lead.phone, msg);
-      saveMessage(lead.phone, 'assistant', msg, 'reativacao');
+      await saveMessage(lead.phone, 'assistant', msg, 'reativacao');
 
       const novaTentativa = tentativaIdx + 1;
-      upsertLead(lead.phone, {
+      await upsertLead(lead.phone, {
         tentativas_reativacao: novaTentativa,
-        ultima_reativacao_em: new Date().toISOString().replace('T', ' ').slice(0, 19),
+        ultima_reativacao_em: new Date(),
         desistido: novaTentativa >= JANELA_HORAS.length ? 1 : 0,
       });
 

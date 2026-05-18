@@ -39,13 +39,13 @@ function mensagemLembrete(nome, dataHora, endereco) {
 }
 
 export async function rodarLembrete() {
-  const leads = listLeadsParaLembrete();
+  const leads = await listLeadsParaLembrete();
   let enviados = 0;
   const agora = Date.now();
 
   for (const lead of leads) {
     try {
-      const dados = JSON.parse(lead.dados || '{}');
+      const dados = typeof lead.dados === 'string' ? JSON.parse(lead.dados || '{}') : (lead.dados || {});
       const data = dados.data_agendada || dados.data;
       const hora = dados.hora;
       const dt = parseDataHoraSP(data, hora);
@@ -57,8 +57,8 @@ export async function rodarLembrete() {
       const endereco = dados.endereco_completo || dados.endereco || '';
       const msg = mensagemLembrete(lead.nome, dt, endereco);
       await sendMessage(lead.phone, msg);
-      saveMessage(lead.phone, 'assistant', msg, 'lembrete');
-      upsertLead(lead.phone, { lembrete_enviado: 1 });
+      await saveMessage(lead.phone, 'assistant', msg, 'lembrete');
+      await upsertLead(lead.phone, { lembrete_enviado: 1 });
       enviados++;
       console.log(`[LEMBRETE] enviado para ${lead.phone} (visita em ${horasAteVisita.toFixed(1)}h)`);
     } catch (e) {

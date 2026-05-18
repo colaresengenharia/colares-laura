@@ -23,6 +23,7 @@ import {
   getLead,
   upsertLead,
   mergeDados,
+  ensureSchema,
 } from './db/conversations.js';
 import { ensureHeaders } from './integrations/sheets.js';
 import { temConflito, proximosSlotsLivres, deleteEvent } from './integrations/calendar.js';
@@ -61,11 +62,19 @@ function pediuHumano(mensagem) {
   return /\b(falar\s+com\s+(?:um\s+)?(?:humano|pessoa|atendente|engenheiro|alguém|alguem|ser\s+humano|gente|fábio|fabio|responsável|responsavel|funcionário|funcionario)|atendente\s+humano|quero\s+(?:um\s+)?atendente|n[ãa]o\s+quero\s+(?:falar\s+com\s+)?(?:rob[ôo]|bot|m[áa]quina)|tem\s+(?:um\s+)?humano|tem\s+(?:uma\s+)?pessoa|me\s+passa\s+pra?\s+(?:um|uma|alguém|alguem)|fala\s+(?:com\s+)?(?:um\s+)?humano|chamar?\s+(?:um\s+)?atendente|chama\s+(?:o\s+)?engenheiro|preciso\s+(?:falar\s+)?com\s+(?:um\s+)?(?:humano|atendente|pessoa)|n[ãa]o\s+é\s+(?:um\s+)?rob[ôo]|cê\s+é\s+rob[ôo])\b/i.test(mensagem);
 }
 
-// Calcula minutos desde uma string SQLite DATETIME (formato "YYYY-MM-DD HH:MM:SS")
-function minutosDesde(sqliteDatetime) {
-  if (!sqliteDatetime) return Infinity;
-  const iso = sqliteDatetime.replace(' ', 'T') + 'Z';
-  return (Date.now() - new Date(iso).getTime()) / 60_000;
+// Calcula minutos desde um timestamp. Aceita Date object (retornado pelo pg) ou string ISO/SQLite.
+function minutosDesde(valor) {
+  if (!valor) return Infinity;
+  let d;
+  if (valor instanceof Date) {
+    d = valor;
+  } else if (typeof valor === 'string') {
+    // Aceita "YYYY-MM-DD HH:MM:SS" (SQLite legacy) ou ISO completo
+    d = new Date(valor.includes('T') ? valor : valor.replace(' ', 'T') + 'Z');
+  } else {
+    d = new Date(valor);
+  }
+  return (Date.now() - d.getTime()) / 60_000;
 }
 
 // Marca o lead como transferido e notifica admin
@@ -75,11 +84,10 @@ async function transferirParaHumano(phone, lead, mensagemOriginal) {
   const saudacao = primeiroNome ? `Combinado, ${primeiroNome}!` : 'Combinado!';
   const resposta = `${saudacao} Vou chamar a equipe agora. Em instantes alguém te responde por aqui. 🙏`;
 
-  const agoraSQLite = new Date().toISOString().slice(0, 19).replace('T', ' ');
-  upsertLead(phone, { transferido_humano_em: agoraSQLite });
+  await upsertLead(phone, { transferido_humano_em: new Date() });
 
   await enviarComoHumano(phone, resposta);
-  saveMessage(phone, 'assistant', resposta, 'transferencia');
+  await saveMessage(phone, 'assistant', resposta, 'transferencia');
 
   await notificarAdmin(
     `🔔 *Cliente pedindo atendente*`,
@@ -214,15 +222,19 @@ app.get('/health', (_req, res) => {
 
 // Endpoint temporário de debug — usado pra inspecionar conversas durante testes
 // Protegido por token simples na query
-app.get('/debug/conversation/:phone', (req, res) => {
+app.get('/debug/conversation/:phone', async (req, res) => {
   const token = process.env.DEBUG_TOKEN;
   // Se a variável não está setada, bloqueia tudo (endpoint desligado).
   // Se está setada, só passa se o token bater exatamente.
   if (!token || req.query.token !== token) return res.sendStatus(403);
-  const phone = req.params.phone;
-  const lead = getLead(phone);
-  const historico = getHistory(phone, 50);
-  res.json({ lead, historico });
+  try {
+    const phone = req.params.phone;
+    const lead = await getLead(phone);
+    const historico = await getHistory(phone, 50);
+    res.json({ lead, historico });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.post('/webhook', async (req, res) => {
@@ -325,16 +337,16 @@ process.on('unhandledRejection', (reason) => {
 
 async function processarMensagem(phone, mensagem, _body, opts = {}) {
   const responderEmAudio = !!opts.responderEmAudio;
-  const historico = getHistory(phone, 10);
-  const lead = getLead(phone) ?? upsertLead(phone, {});
+  const historico = await getHistory(phone, 10);
+  const lead = (await getLead(phone)) ?? (await upsertLead(phone, {}));
 
   // Salva telefone automaticamente no JSON 'dados' (a tabela leads não tem coluna telefone)
   const dadosAtuais = JSON.parse(lead?.dados || '{}');
   if (!dadosAtuais.telefone) {
-    mergeDados(phone, { telefone: phone });
+    await mergeDados(phone, { telefone: phone });
   }
 
-  saveMessage(phone, 'user', mensagem);
+  await saveMessage(phone, 'user', mensagem);
 
   // --- TRANSFERÊNCIA HUMANO ---
   // 1) Se o lead JÁ está em transferência ativa: bot fica em pausa, só notifica admin
@@ -351,7 +363,7 @@ async function processarMensagem(phone, mensagem, _body, opts = {}) {
       return;
     }
     // 30+ min sem você responder: limpa o flag e a Laura volta a atender
-    upsertLead(phone, { transferido_humano_em: null });
+    await upsertLead(phone, { transferido_humano_em: null });
     await notificarAdmin(
       `🔄 *Bot reativado*`,
       `${lead.nome || phone}: passaram ${TRANSFERENCIA_MIN_PAUSA} min sem resposta sua. Laura voltou a atender automaticamente.`
@@ -423,7 +435,7 @@ async function processarMensagem(phone, mensagem, _body, opts = {}) {
     } catch (e) {
       console.error('[CANCELAMENTO] Falhou ao deletar evento:', e.message);
     }
-    upsertLead(phone, {
+    await upsertLead(phone, {
       agendamento_confirmado: 0,
       calendar_event_id: null,
       calendar_salvo: 0,
@@ -432,22 +444,23 @@ async function processarMensagem(phone, mensagem, _body, opts = {}) {
   }
 
   if (resultado.dados_coletados) {
-    mergeDados(phone, resultado.dados_coletados);
+    await mergeDados(phone, resultado.dados_coletados);
   }
 
   // Salva dados do agendamento (endereço, data, hora) para o Guardião usar
   if (resultado.dados_agendamento) {
-    mergeDados(phone, resultado.dados_agendamento);
+    await mergeDados(phone, resultado.dados_agendamento);
   }
 
   // Backup: se o agente esqueceu de extrair o nome, tenta via regex na mensagem do cliente
-  const nomeAtual = JSON.parse(getLead(phone)?.dados || '{}').nome;
+  const leadAposMerge = await getLead(phone);
+  const nomeAtual = JSON.parse(leadAposMerge?.dados || '{}').nome;
   if (!nomeAtual && !resultado.dados_coletados?.nome) {
     const nomeFallback = extrairNomeFallback(mensagem);
     if (nomeFallback) {
       console.log(`[FALLBACK] Nome extraído via regex: ${nomeFallback}`);
-      mergeDados(phone, { nome: nomeFallback });
-      upsertLead(phone, { nome: nomeFallback }); // também na coluna nome (não só no JSON dados)
+      await mergeDados(phone, { nome: nomeFallback });
+      await upsertLead(phone, { nome: nomeFallback }); // também na coluna nome (não só no JSON dados)
     }
   }
 
@@ -458,16 +471,17 @@ async function processarMensagem(phone, mensagem, _body, opts = {}) {
     const lauraPedolGPD = ultimaAssistant && /registrar\s+seus\s+dados|lgpd|dados\s+de\s+contato/i.test(ultimaAssistant.content);
     if (lauraPedolGPD && consentiuLGPDFallback(mensagem)) {
       console.log('[FALLBACK] LGPD detectado via regex');
-      upsertLead(phone, { lgpd_consentido: 1 });
+      await upsertLead(phone, { lgpd_consentido: 1 });
     }
   }
 
-  if (resultado.lgpd_consentido) upsertLead(phone, { lgpd_consentido: 1 });
+  if (resultado.lgpd_consentido) await upsertLead(phone, { lgpd_consentido: 1 });
 
   // Trava: só confirma agendamento se tem hora EXATA (HH:MM ou H:MM)
   // Evita salvar visita com "de manhã" / "à tarde" sem hora certa
   if (resultado.agendamento_confirmado) {
-    const dadosLead = JSON.parse(getLead(phone)?.dados || '{}');
+    const leadParaAgend = await getLead(phone);
+    const dadosLead = JSON.parse(leadParaAgend?.dados || '{}');
     const dadosDoAgendamento = resultado.dados_agendamento || {};
     const hora = String(dadosDoAgendamento.hora || dadosLead.hora || '');
     const data = String(dadosDoAgendamento.data || dadosLead.data || '');
@@ -482,8 +496,7 @@ async function processarMensagem(phone, mensagem, _body, opts = {}) {
       try {
         const dataISO = combinarDataHoraSP(data, hora);
         if (dataISO) {
-          const leadAtual = getLead(phone);
-          const ignoreEventId = leadAtual?.calendar_event_id || null; // permite reagendar sem conflitar consigo
+          const ignoreEventId = leadParaAgend?.calendar_event_id || null; // permite reagendar sem conflitar consigo
           const check = await temConflito(dataISO, ignoreEventId);
           if (check.conflito) {
             console.warn(`[AGENDADOR] Conflito detectado em ${dataISO}. Sugerindo slots livres.`);
@@ -494,16 +507,16 @@ async function processarMensagem(phone, mensagem, _body, opts = {}) {
             const slots = await proximosSlotsLivres(dataPedida, 3, 14);
             resultado.resposta_cliente = montarMensagemSlots(slots);
           } else {
-            upsertLead(phone, { agendamento_confirmado: 1 });
+            await upsertLead(phone, { agendamento_confirmado: 1 });
           }
         } else {
           // Não conseguiu interpretar data — confirma mesmo assim (melhor errar pra confirmar que pra bloquear)
-          upsertLead(phone, { agendamento_confirmado: 1 });
+          await upsertLead(phone, { agendamento_confirmado: 1 });
         }
       } catch (e) {
         console.error('[AGENDADOR] Erro ao checar conflito no Calendar:', e.message);
         // Em caso de erro na API, confirma mesmo assim — melhor confirmar que travar
-        upsertLead(phone, { agendamento_confirmado: 1 });
+        await upsertLead(phone, { agendamento_confirmado: 1 });
       }
     }
   }
@@ -512,7 +525,7 @@ async function processarMensagem(phone, mensagem, _body, opts = {}) {
   const proximoAgenteParaSalvar =
     resultado.proximo_agente === 'guardiao' ? null : (resultado.proximo_agente ?? agentNome);
 
-  upsertLead(phone, {
+  await upsertLead(phone, {
     estagio: triagem.estagio,
     proximo_agente: proximoAgenteParaSalvar,
     nome: resultado.dados_coletados?.nome || lead?.nome || '',
@@ -522,7 +535,7 @@ async function processarMensagem(phone, mensagem, _body, opts = {}) {
   // - se ainda não foi salvo: cria linha + evento (e guarda os IDs)
   // - se já existe: atualiza a mesma linha e o mesmo evento
   if (resultado.agendamento_confirmado) {
-    const leadAtualizado = getLead(phone);
+    const leadAtualizado = await getLead(phone);
     guardiao(phone, leadAtualizado).catch((e) => console.error('[GUARDIÃO]', e.message));
   }
 
@@ -548,13 +561,22 @@ async function processarMensagem(phone, mensagem, _body, opts = {}) {
     } else {
       await enviarComoHumano(phone, resposta);
     }
-    saveMessage(phone, 'assistant', resposta, agentNome);
+    await saveMessage(phone, 'assistant', resposta, agentNome);
   }
 }
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
   console.log(`[Laura] Servidor rodando na porta ${PORT}`);
+
+  // Garante que o schema do PostgreSQL existe antes de processar qualquer mensagem
+  try {
+    await ensureSchema();
+  } catch (e) {
+    console.error('[DB] Falha ao inicializar schema:', e.message);
+    alertarAdmin('db-boot', 'Falha ao conectar/criar schema do PostgreSQL', e.message).catch(() => {});
+  }
+
   try {
     await ensureHeaders();
     console.log('[Sheets] Cabeçalhos verificados.');
