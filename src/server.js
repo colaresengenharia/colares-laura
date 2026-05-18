@@ -7,9 +7,16 @@ import { tecnico } from './agents/tecnico.js';
 import { agendador } from './agents/agendador.js';
 import { pos_agendamento } from './agents/pos_agendamento.js';
 import { guardiao } from './agents/guardiao.js';
-import { sendMessage, sendAudio, sendChatState, extractPhone, extractMessage, isAudio, downloadAudioBase64 } from './integrations/zapi.js';
+import {
+  sendMessage, sendAudio, sendChatState,
+  extractPhone, extractMessage,
+  isAudio, downloadAudioBase64,
+  isImage, downloadImageBase64, getImageMimeType, getImageCaption,
+  isDocument, downloadDocumentBase64, getDocumentCaption,
+} from './integrations/zapi.js';
 import { transcribeAudio } from './integrations/speech.js';
 import { sintetizarVoz } from './integrations/tts.js';
+import { descreverImagem, descreverDocumento } from './integrations/anthropic.js';
 import {
   getHistory,
   saveMessage,
@@ -20,7 +27,7 @@ import {
 import { ensureHeaders } from './integrations/sheets.js';
 import { temConflito, proximosSlotsLivres, deleteEvent } from './integrations/calendar.js';
 import { iniciarScheduler } from './jobs/scheduler.js';
-import { alertarAdmin, alertarBoot } from './utils/alerta.js';
+import { alertarAdmin, alertarBoot, notificarAdmin } from './utils/alerta.js';
 import { extrairNomeFallback as extrairNomeUtil } from './utils/extracao.js';
 
 const app = express();
@@ -43,6 +50,41 @@ function consentiuLGPDFallback(mensagem) {
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+// --- TRANSFERÊNCIA HUMANO ---
+const TRANSFERENCIA_MIN_PAUSA = 30; // minutos que a Laura fica em pausa após pedido
+
+// Detecta se o cliente está pedindo atendente humano
+function pediuHumano(mensagem) {
+  if (!mensagem) return false;
+  return /\b(falar\s+com\s+(?:um\s+)?(?:humano|pessoa|atendente|engenheiro|alguém|alguem|ser\s+humano|gente|fábio|fabio|responsável|responsavel|funcionário|funcionario)|atendente\s+humano|quero\s+(?:um\s+)?atendente|n[ãa]o\s+quero\s+(?:falar\s+com\s+)?(?:rob[ôo]|bot|m[áa]quina)|tem\s+(?:um\s+)?humano|tem\s+(?:uma\s+)?pessoa|me\s+passa\s+pra?\s+(?:um|uma|alguém|alguem)|fala\s+(?:com\s+)?(?:um\s+)?humano|chamar?\s+(?:um\s+)?atendente|chama\s+(?:o\s+)?engenheiro|preciso\s+(?:falar\s+)?com\s+(?:um\s+)?(?:humano|atendente|pessoa)|n[ãa]o\s+é\s+(?:um\s+)?rob[ôo]|cê\s+é\s+rob[ôo])\b/i.test(mensagem);
+}
+
+// Calcula minutos desde uma string SQLite DATETIME (formato "YYYY-MM-DD HH:MM:SS")
+function minutosDesde(sqliteDatetime) {
+  if (!sqliteDatetime) return Infinity;
+  const iso = sqliteDatetime.replace(' ', 'T') + 'Z';
+  return (Date.now() - new Date(iso).getTime()) / 60_000;
+}
+
+// Marca o lead como transferido e notifica admin
+async function transferirParaHumano(phone, lead, mensagemOriginal) {
+  const nome = lead?.nome || JSON.parse(lead?.dados || '{}').nome || '';
+  const primeiroNome = (nome || '').split(/\s+/)[0];
+  const saudacao = primeiroNome ? `Combinado, ${primeiroNome}!` : 'Combinado!';
+  const resposta = `${saudacao} Vou chamar a equipe agora. Em instantes alguém te responde por aqui. 🙏`;
+
+  const agoraSQLite = new Date().toISOString().slice(0, 19).replace('T', ' ');
+  upsertLead(phone, { transferido_humano_em: agoraSQLite });
+
+  await enviarComoHumano(phone, resposta);
+  saveMessage(phone, 'assistant', resposta, 'transferencia');
+
+  await notificarAdmin(
+    `🔔 *Cliente pedindo atendente*`,
+    `Nome: ${nome || '(sem nome)'}\nTelefone: ${phone}\n\nÚltima mensagem:\n"${mensagemOriginal.slice(0, 300)}"\n\nResponda direto pelo WhatsApp.\nLaura fica em pausa por ${TRANSFERENCIA_MIN_PAUSA} min.`
+  );
 }
 
 // Fila por telefone: garante que mensagens do mesmo cliente sejam processadas em ordem,
@@ -216,6 +258,47 @@ app.post('/webhook', async (req, res) => {
       return;
     }
 
+    // Mensagem de imagem (foto do problema, do imóvel, etc)
+    if (isImage(body)) {
+      console.log(`[IMAGE] Recebida de ${phone}`);
+      const base64 = await downloadImageBase64(body);
+      if (!base64) {
+        await enfileirar(phone, () => processarMensagem(phone, 'Recebi sua foto mas não consegui abrir. Pode me descrever o que aparece?', body));
+        return;
+      }
+      const descricao = await descreverImagem(base64, getImageMimeType(body));
+      const caption = getImageCaption(body);
+      if (!descricao) {
+        await enfileirar(phone, () => processarMensagem(phone, `Recebi sua foto. ${caption ? `Legenda: ${caption}` : ''}`, body));
+        return;
+      }
+      console.log(`[IMAGE] Descrição: ${descricao.slice(0, 80)}`);
+      // Compõe um texto que o agente vai entender como "cliente mandou foto + o que aparece"
+      const textoComposto = `[O cliente enviou uma foto. Descrição da imagem: ${descricao}]${caption ? `\nLegenda que ele escreveu: "${caption}"` : ''}`;
+      await enfileirar(phone, () => processarMensagem(phone, textoComposto, body));
+      return;
+    }
+
+    // Mensagem de documento (PDF, laudo, planta, etc)
+    if (isDocument(body)) {
+      console.log(`[DOC] Recebido de ${phone}`);
+      const base64 = await downloadDocumentBase64(body);
+      if (!base64) {
+        await enfileirar(phone, () => processarMensagem(phone, 'Recebi seu documento mas não consegui abrir. Pode me contar o que é?', body));
+        return;
+      }
+      const resumo = await descreverDocumento(base64);
+      const caption = getDocumentCaption(body);
+      if (!resumo) {
+        await enfileirar(phone, () => processarMensagem(phone, `Recebi seu documento (${caption || 'PDF'}).`, body));
+        return;
+      }
+      console.log(`[DOC] Resumo: ${resumo.slice(0, 80)}`);
+      const textoComposto = `[O cliente enviou um documento PDF. Resumo do conteúdo: ${resumo}]${caption ? `\nNome do arquivo / legenda: "${caption}"` : ''}`;
+      await enfileirar(phone, () => processarMensagem(phone, textoComposto, body));
+      return;
+    }
+
     // Mensagem de texto
     const mensagem = extractMessage(body);
     if (!mensagem) return;
@@ -252,6 +335,34 @@ async function processarMensagem(phone, mensagem, _body, opts = {}) {
   }
 
   saveMessage(phone, 'user', mensagem);
+
+  // --- TRANSFERÊNCIA HUMANO ---
+  // 1) Se o lead JÁ está em transferência ativa: bot fica em pausa, só notifica admin
+  if (lead?.transferido_humano_em) {
+    const minDesde = minutosDesde(lead.transferido_humano_em);
+    if (minDesde < TRANSFERENCIA_MIN_PAUSA) {
+      // Continua em pausa — não responde, mas avisa o admin de cada nova mensagem
+      const nome = lead.nome || dadosAtuais.nome || '';
+      await notificarAdmin(
+        `📩 *Nova mensagem em transferência*`,
+        `${nome ? nome + ' (' + phone + ')' : phone}:\n"${mensagem.slice(0, 300)}"\n\n_Faltam ${Math.ceil(TRANSFERENCIA_MIN_PAUSA - minDesde)} min pra Laura voltar automaticamente._`
+      );
+      console.log(`[TRANSFER] Cliente ${phone} em pausa (${Math.round(minDesde)}/${TRANSFERENCIA_MIN_PAUSA} min). Bot não respondeu.`);
+      return;
+    }
+    // 30+ min sem você responder: limpa o flag e a Laura volta a atender
+    upsertLead(phone, { transferido_humano_em: null });
+    await notificarAdmin(
+      `🔄 *Bot reativado*`,
+      `${lead.nome || phone}: passaram ${TRANSFERENCIA_MIN_PAUSA} min sem resposta sua. Laura voltou a atender automaticamente.`
+    );
+  }
+
+  // 2) Cliente está pedindo humano AGORA?
+  if (pediuHumano(mensagem)) {
+    await transferirParaHumano(phone, lead, mensagem);
+    return;
+  }
 
   const triagem = await triador(mensagem, historico);
 

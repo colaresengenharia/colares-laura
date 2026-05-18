@@ -40,6 +40,23 @@ export async function alertarAdmin(categoria, titulo, detalhe = '') {
   }
 }
 
+/**
+ * Notifica o admin SEM throttling — usado para mensagens que precisam chegar SEMPRE
+ * (ex: cliente em transferência humana mandou nova mensagem).
+ */
+export async function notificarAdmin(titulo, detalhe = '') {
+  const adminPhone = process.env.ADMIN_PHONE;
+  if (!adminPhone) return;
+  const ts = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+  const msg = `${titulo}\n\n${detalhe}\n\n_${ts}_`;
+  try {
+    await sendMessage(adminPhone, msg);
+    console.log(`[NOTIFICAR-ADMIN] Enviado: ${titulo.slice(0, 60)}`);
+  } catch (e) {
+    console.error(`[NOTIFICAR-ADMIN] Falha:`, e.message);
+  }
+}
+
 // Alerta de inicialização (uma vez por boot). Ajuda a confirmar que o sistema voltou após uma queda.
 export async function alertarBoot() {
   const adminPhone = process.env.ADMIN_PHONE;

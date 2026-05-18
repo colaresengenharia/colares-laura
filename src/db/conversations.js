@@ -67,6 +67,7 @@ function initSchema() {
   addCol('desistido', 'INTEGER DEFAULT 0');
   addCol('sheets_row', 'INTEGER');
   addCol('calendar_event_id', 'TEXT');
+  addCol('transferido_humano_em', 'DATETIME');
 }
 
 export function getUltimaMensagemUserEm(phone) {

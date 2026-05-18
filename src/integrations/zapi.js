@@ -72,3 +72,61 @@ export async function downloadAudioBase64(webhookBody) {
 
   return Buffer.from(resp.data).toString('base64');
 }
+
+// --- Imagens ---
+export function isImage(body) {
+  if (!body) return false;
+  if (body.type === 'image') return true;
+  if (body.image?.imageUrl) return true;
+  if (typeof body.mimetype === 'string' && body.mimetype.startsWith('image/')) return true;
+  return false;
+}
+
+export function getImageMimeType(body) {
+  return body?.image?.mimeType || body?.mimetype || 'image/jpeg';
+}
+
+export function getImageCaption(body) {
+  return body?.image?.caption || body?.caption || '';
+}
+
+export async function downloadImageBase64(body) {
+  const url = body?.image?.imageUrl ?? body?.imageUrl ?? null;
+  if (!url) {
+    console.warn('[IMAGE] Nenhuma URL de imagem. body.image:', JSON.stringify(body?.image)?.slice(0, 200));
+    return null;
+  }
+  console.log('[IMAGE] Baixando de:', url.slice(0, 80));
+  const resp = await axios.get(url, {
+    responseType: 'arraybuffer',
+    headers: { 'Client-Token': ZAPI_CLIENT_TOKEN },
+  });
+  return Buffer.from(resp.data).toString('base64');
+}
+
+// --- Documentos (PDF, etc) ---
+export function isDocument(body) {
+  if (!body) return false;
+  if (body.type === 'document') return true;
+  if (body.document?.documentUrl) return true;
+  if (typeof body.mimetype === 'string' && body.mimetype.startsWith('application/')) return true;
+  return false;
+}
+
+export function getDocumentCaption(body) {
+  return body?.document?.caption || body?.caption || body?.document?.fileName || '';
+}
+
+export async function downloadDocumentBase64(body) {
+  const url = body?.document?.documentUrl ?? body?.documentUrl ?? null;
+  if (!url) {
+    console.warn('[DOC] Nenhuma URL de documento. body.document:', JSON.stringify(body?.document)?.slice(0, 200));
+    return null;
+  }
+  console.log('[DOC] Baixando de:', url.slice(0, 80));
+  const resp = await axios.get(url, {
+    responseType: 'arraybuffer',
+    headers: { 'Client-Token': ZAPI_CLIENT_TOKEN },
+  });
+  return Buffer.from(resp.data).toString('base64');
+}
