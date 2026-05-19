@@ -26,7 +26,7 @@ import {
   ensureSchema,
 } from './db/conversations.js';
 import { ensureHeaders } from './integrations/sheets.js';
-import { temConflito, proximosSlotsLivres, deleteEvent } from './integrations/calendar.js';
+import { temConflito, proximosSlotsLivres, deleteEvent, listEventsBetween, DURACAO_VISITA_MIN, BUFFER_ENTRE_VISITAS_MIN } from './integrations/calendar.js';
 import { iniciarScheduler } from './jobs/scheduler.js';
 import { alertarAdmin, alertarBoot, notificarAdmin } from './utils/alerta.js';
 import { extrairNomeFallback as extrairNomeUtil } from './utils/extracao.js';
@@ -206,6 +206,50 @@ async function enviarComoHumano(phone, texto) {
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', ts: new Date().toISOString() });
+});
+
+// Endpoint de debug pra verificar manualmente se uma data tem conflito.
+// Uso: /debug/check-conflito?token=...&data=2026-05-20T15:30:00-03:00
+app.get('/debug/check-conflito', async (req, res) => {
+  const token = process.env.DEBUG_TOKEN;
+  if (!token || req.query.token !== token) return res.sendStatus(403);
+  const data = req.query.data;
+  if (!data) return res.status(400).json({ error: 'missing ?data=...' });
+  try {
+    const novoInicio = new Date(data);
+    if (isNaN(novoInicio.getTime())) return res.status(400).json({ error: 'data invalida' });
+    const novoFim = new Date(novoInicio.getTime() + DURACAO_VISITA_MIN * 60_000);
+    const janelaInicio = new Date(novoInicio.getTime() - 24 * 60 * 60_000);
+    const janelaFim = new Date(novoFim.getTime() + 24 * 60 * 60_000);
+
+    const eventos = await listEventsBetween(janelaInicio, janelaFim);
+    const resultado = await temConflito(data);
+
+    res.json({
+      pedido: {
+        data: data,
+        inicio_calculado: novoInicio.toISOString(),
+        fim_calculado: novoFim.toISOString(),
+        duracao_min: DURACAO_VISITA_MIN,
+        buffer_min: BUFFER_ENTRE_VISITAS_MIN,
+      },
+      janela_busca: {
+        de: janelaInicio.toISOString(),
+        ate: janelaFim.toISOString(),
+      },
+      eventos_no_calendar: eventos.length,
+      eventos: eventos.map((e) => ({
+        id: e.id,
+        summary: e.summary,
+        location: e.location,
+        start: e.start,
+        end: e.end,
+      })),
+      resultado_checagem_conflito: resultado,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message, stack: (e.stack || '').slice(0, 600) });
+  }
 });
 
 // Endpoint temporário de debug — usado pra inspecionar conversas durante testes
