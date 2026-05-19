@@ -169,3 +169,44 @@ export async function mergeDados(phone, novosDados = {}) {
   await upsertLead(phone, { dados: JSON.stringify(dadosMerged) });
   return dadosMerged;
 }
+
+// --- Advisory Lock por slot horário (anti-race-condition de agendamento) ---
+//
+// Quando 2 clientes confirmam no mesmo segundo um agendamento pro mesmo horário,
+// ambos passam pela verificação de conflito antes do primeiro evento ser criado
+// no Google Calendar. Solução: serializar a criação de eventos do MESMO slot
+// usando pg_advisory_lock — apenas 1 processo por vez pode criar evento naquele
+// horário específico.
+
+// Hash determinístico de data+hora pra usar como chave de lock (int32)
+function hashSlotKey(dataISO) {
+  const slot = String(dataISO || '').slice(0, 16); // "YYYY-MM-DDTHH:MM"
+  let hash = 0;
+  for (let i = 0; i < slot.length; i++) {
+    hash = ((hash * 31) + slot.charCodeAt(i)) | 0;
+  }
+  return hash;
+}
+
+/**
+ * Executa `fn` segurando um advisory lock no slot horário indicado.
+ * Garante que apenas 1 processo por vez execute a função para o MESMO slot.
+ *
+ * @param {string} dataISO - data ISO da visita (ex: "2026-05-20T15:30:00-03:00")
+ * @param {() => Promise<T>} fn
+ * @returns {Promise<T>}
+ */
+export async function comLockDeSlot(dataISO, fn) {
+  const key = hashSlotKey(dataISO);
+  const client = await getPool().connect();
+  try {
+    await client.query('SELECT pg_advisory_lock($1)', [key]);
+    try {
+      return await fn();
+    } finally {
+      await client.query('SELECT pg_advisory_unlock($1)', [key]);
+    }
+  } finally {
+    client.release();
+  }
+}

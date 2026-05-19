@@ -1,7 +1,7 @@
 import { callClaude } from '../integrations/anthropic.js';
 import { appendLead, updateLeadRow } from '../integrations/sheets.js';
 import { createEvent, updateEvent, temConflito } from '../integrations/calendar.js';
-import { upsertLead } from '../db/conversations.js';
+import { upsertLead, comLockDeSlot } from '../db/conversations.js';
 import { alertarAdmin } from '../utils/alerta.js';
 
 function getPromptGuardiao(dados, phone) {
@@ -86,20 +86,29 @@ export async function guardiao(phone, lead) {
   // --- CALENDAR ---
   if (resultado.googleCalendar && lead?.agendamento_confirmado) {
     try {
-      // Trava final anti-conflito (race condition: 2 clientes confirmando ao mesmo tempo)
-      const check = await temConflito(resultado.googleCalendar.data_inicio, lead?.calendar_event_id || null);
-      if (check.conflito) {
-        console.error(`[GUARDIÃO] CONFLITO DETECTADO ao criar evento — bloqueador: ${check.eventoBloqueador?.summary} ${check.eventoBloqueador?.inicio}. Evento NÃO criado.`);
-        // Não cria o evento. Marca o lead como precisando ser reagendado.
-        await upsertLead(phone, { agendamento_confirmado: 0, proximo_agente: 'agendador' });
-      } else if (lead?.calendar_event_id) {
-        await updateEvent(lead.calendar_event_id, resultado.googleCalendar);
-        console.log(`[GUARDIÃO] Evento ATUALIZADO no Calendar (${lead.calendar_event_id}):`, resultado.googleCalendar.data_inicio);
-      } else {
-        const eventCriado = await createEvent(resultado.googleCalendar);
-        await upsertLead(phone, { calendar_salvo: 1, calendar_event_id: eventCriado.id });
-        console.log(`[GUARDIÃO] Evento criado no Calendar (${eventCriado.id}):`, resultado.googleCalendar.data_inicio);
-      }
+      // Lock por slot horário: garante que apenas 1 processo cria/atualiza evento
+      // pra esse slot por vez (serializa requests simultâneas, evita 2 visitas no mesmo horário).
+      await comLockDeSlot(resultado.googleCalendar.data_inicio, async () => {
+        // Trava final anti-conflito DENTRO do lock — agora não tem mais janela de race.
+        const check = await temConflito(resultado.googleCalendar.data_inicio, lead?.calendar_event_id || null);
+        if (check.conflito) {
+          console.error(`[GUARDIÃO] CONFLITO DETECTADO dentro do lock — bloqueador: ${check.eventoBloqueador?.summary} ${check.eventoBloqueador?.inicio}. Evento NÃO criado.`);
+          // Não cria o evento. Marca o lead como precisando ser reagendado.
+          await upsertLead(phone, { agendamento_confirmado: 0, proximo_agente: 'agendador' });
+          alertarAdmin(
+            'calendar-conflito',
+            'Conflito de agendamento bloqueado',
+            `Phone: ${phone}\nHorário pedido: ${resultado.googleCalendar.data_inicio}\nBloqueador: ${check.eventoBloqueador?.summary || ''}`
+          ).catch(() => {});
+        } else if (lead?.calendar_event_id) {
+          await updateEvent(lead.calendar_event_id, resultado.googleCalendar);
+          console.log(`[GUARDIÃO] Evento ATUALIZADO no Calendar (${lead.calendar_event_id}):`, resultado.googleCalendar.data_inicio);
+        } else {
+          const eventCriado = await createEvent(resultado.googleCalendar);
+          await upsertLead(phone, { calendar_salvo: 1, calendar_event_id: eventCriado.id });
+          console.log(`[GUARDIÃO] Evento criado no Calendar (${eventCriado.id}):`, resultado.googleCalendar.data_inicio);
+        }
+      });
     } catch (e) {
       console.error('[GUARDIÃO] Erro no Calendar:', e.message);
       console.error('[GUARDIÃO] Dados Calendar:', JSON.stringify(resultado.googleCalendar));
